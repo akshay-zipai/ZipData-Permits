@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.whl
+*.so
+
+# Env
+.env
+*.env.local
+
+# Virtual envs
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data & outputs
+output/
+chroma_db/
+data/zip_county_crosswalk.csv   # large file — not committed
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

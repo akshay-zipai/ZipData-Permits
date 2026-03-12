@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose up --build -d)",
+      "Bash(curl -s -X DELETE \"http://localhost:8000/api/v1/rag/index/Colusa%20County\")",
+      "Bash(python3 -m json.tool)"
+    ]
+  }
+}

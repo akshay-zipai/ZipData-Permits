@@ -1,0 +1,89 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CA Permit RAG System — Docker Compose
+#
+# Services:
+#   api     — FastAPI application (crawling, RAG, LLM inference, WebSocket)
+#   ollama  — Local LLM server running Gemma 3 4B
+#
+# Usage:
+#   docker compose up --build          # start all services
+#   docker compose up api              # start only the API (uses remote LLM)
+#   docker compose logs -f api         # stream API logs
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Ollama LLM server ────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ca_permit_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    # Pull Gemma 3 4B on first start
+    entrypoint: >
+      sh -c "ollama serve &
+             sleep 5 &&
+             ollama pull gemma3:4b &&
+             wait"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 600s   # 10 min — covers first-run 3.3 GB model pull
+    # GPU support (uncomment if you have NVIDIA GPU + nvidia-container-toolkit)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # ── FastAPI Application ────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ca_permit_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override Ollama URL to use Docker service name
+      - LLM_OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_PERSIST_DIR=/app/chroma_db
+    volumes:
+      # Persist ChromaDB between restarts
+      - chroma_data:/app/chroma_db
+      # Persist generated crosswalk CSV — avoids re-downloading on every restart
+      - crosswalk_data:/app/data
+      # Output directory
+      - ./output:/app/output
+    depends_on:
+      ollama:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  ollama_models:
+    driver: local
+  chroma_data:
+    driver: local
+  crosswalk_data:
+    driver: local

@@ -1,0 +1,82 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 1: builder
+# ─────────────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc g++ git curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Install only chromium browser, skip fonts (causes missing package errors on slim)
+RUN playwright install chromium
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stage 2: runtime
+# ─────────────────────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+# Chromium runtime system dependencies (no font packages)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libx11-6 \
+    libxext6 \
+    libxshmfence1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy venv + playwright browsers from builder
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /root/.cache/ms-playwright /root/.cache/ms-playwright
+
+ENV PATH="/opt/venv/bin:$PATH"
+# Tell playwright where browsers are
+ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright
+
+# Non-root user
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/chroma_db /app/data /app/output && \
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /root/.cache/ms-playwright
+
+# Copy app
+COPY --chown=appuser:appuser app/                     ./app/
+COPY --chown=appuser:appuser prompts/                 ./prompts/
+COPY --chown=appuser:appuser data/permit_portals.json ./data/permit_portals.json
+COPY --chown=appuser:appuser scripts/                 ./scripts/
+COPY --chown=appuser:appuser generate_ca_permit_mapping.py .
+
+RUN chmod +x scripts/entrypoint.sh
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
+
+ENTRYPOINT ["scripts/entrypoint.sh"]
