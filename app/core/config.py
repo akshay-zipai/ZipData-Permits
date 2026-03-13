@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "CA Permit RAG System"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
-    ENVIRONMENT: str = "production"
+    ENVIRONMENT: str = "production"  # "dev" | "production"
 
     # Server
     HOST: str = "0.0.0.0"
@@ -42,13 +42,18 @@ class Settings(BaseSettings):
     EMBEDDING_MAX_LENGTH: int = 512
 
     # LLM Service
-    LLM_BACKEND: str = "ollama"  # "ollama" | "huggingface" | "openai"
+    LLM_BACKEND: str = "ollama"  # Used outside production: "ollama" | "huggingface" | "openai"
     LLM_MODEL_NAME: str = "gemma3:4b"
     LLM_MAX_NEW_TOKENS: int = 1024
     LLM_TEMPERATURE: float = 0.7
     LLM_TOP_P: float = 0.9
     LLM_OLLAMA_BASE_URL: str = "http://ollama:11434"
     LLM_OLLAMA_TIMEOUT: int = 300  # seconds — PDF contexts need longer generation
+
+    # Amazon Bedrock (used when ENVIRONMENT=production)
+    BEDROCK_MODEL_ID: str = "google.gemma-3-12b-it"
+    BEDROCK_REGION: str = "us-east-1"
+    BEDROCK_READ_TIMEOUT: int = 300
 
     # HuggingFace fallback (if LLM_BACKEND=huggingface)
     HF_MODEL_NAME: str = "google/gemma-3-4b-it"

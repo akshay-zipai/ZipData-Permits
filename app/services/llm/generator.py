@@ -1,8 +1,9 @@
 """
 LLM Generation Service.
-Backend is selected by LLM_BACKEND env var: "ollama" | "huggingface" | "openai".
-Swap the model any time by updating LLM_MODEL_NAME (Ollama) or HF_MODEL_NAME (HF) in .env.
+When ENVIRONMENT=production, Bedrock is used automatically.
+Outside production, backend is selected by LLM_BACKEND: "ollama" | "huggingface" | "openai".
 """
+import asyncio
 import time
 from abc import ABC, abstractmethod
 from typing import AsyncGenerator, Optional
@@ -126,6 +127,115 @@ class OllamaBackend(BaseLLMBackend):
                                 yield content
                         except json.JSONDecodeError:
                             continue
+
+
+# ── Amazon Bedrock backend ────────────────────────────────────────────────────
+
+class BedrockBackend(BaseLLMBackend):
+    def __init__(self):
+        import boto3
+        from botocore.config import Config
+
+        self.model = settings.BEDROCK_MODEL_ID
+        self.client = boto3.client(
+            "bedrock-runtime",
+            region_name=settings.BEDROCK_REGION,
+            config=Config(
+                read_timeout=settings.BEDROCK_READ_TIMEOUT,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
+        )
+
+    def _build_messages(self, prompt: str) -> list[dict]:
+        return [{"role": "user", "content": [{"text": prompt}]}]
+
+    def _build_system(self, system_prompt: Optional[str]) -> list[dict]:
+        if not system_prompt:
+            return []
+        return [{"text": system_prompt}]
+
+    @staticmethod
+    def _extract_text(message: dict) -> str:
+        content = message.get("content", [])
+        return "".join(block.get("text", "") for block in content if isinstance(block, dict))
+
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        max_new_tokens: int = settings.LLM_MAX_NEW_TOKENS,
+        temperature: float = settings.LLM_TEMPERATURE,
+    ) -> LLMResponse:
+        start = time.perf_counter()
+
+        def _invoke():
+            return self.client.converse(
+                modelId=self.model,
+                messages=self._build_messages(prompt),
+                system=self._build_system(system_prompt),
+                inferenceConfig={
+                    "maxTokens": max_new_tokens,
+                    "temperature": temperature,
+                    "topP": settings.LLM_TOP_P,
+                },
+            )
+
+        resp = await asyncio.to_thread(_invoke)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        output = resp.get("output", {}).get("message", {})
+        usage = resp.get("usage", {})
+
+        return LLMResponse(
+            text=self._extract_text(output),
+            model=self.model,
+            prompt_tokens=usage.get("inputTokens"),
+            completion_tokens=usage.get("outputTokens"),
+            generation_time_ms=round(elapsed_ms, 2),
+        )
+
+    async def stream(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        max_new_tokens: int = settings.LLM_MAX_NEW_TOKENS,
+        temperature: float = settings.LLM_TEMPERATURE,
+    ) -> AsyncGenerator[str, None]:
+        queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def _invoke_stream():
+            try:
+                resp = self.client.converse_stream(
+                    modelId=self.model,
+                    messages=self._build_messages(prompt),
+                    system=self._build_system(system_prompt),
+                    inferenceConfig={
+                        "maxTokens": max_new_tokens,
+                        "temperature": temperature,
+                        "topP": settings.LLM_TOP_P,
+                    },
+                )
+                for event in resp.get("stream", []):
+                    delta = event.get("contentBlockDelta", {}).get("delta", {})
+                    text = delta.get("text")
+                    if text:
+                        loop.call_soon_threadsafe(queue.put_nowait, text)
+            except Exception as exc:
+                loop.call_soon_threadsafe(queue.put_nowait, exc)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+
+        task = asyncio.create_task(asyncio.to_thread(_invoke_stream))
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
+        finally:
+            await task
 
 
 # ── HuggingFace backend ───────────────────────────────────────────────────────
@@ -265,18 +375,30 @@ class LLMService:
     def __init__(self):
         self._backend: Optional[BaseLLMBackend] = None
 
+    def _resolve_backend_name(self) -> str:
+        environment = settings.ENVIRONMENT.lower()
+        if environment in {"prod", "production"}:
+            return "bedrock"
+        return settings.LLM_BACKEND.lower()
+
     def _get_backend(self) -> BaseLLMBackend:
         if self._backend is None:
-            backend = settings.LLM_BACKEND.lower()
+            backend = self._resolve_backend_name()
             if backend == "ollama":
                 self._backend = OllamaBackend()
+            elif backend == "bedrock":
+                self._backend = BedrockBackend()
             elif backend == "huggingface":
                 self._backend = HuggingFaceBackend()
             elif backend == "openai":
                 self._backend = OpenAIBackend()
             else:
                 raise ValueError(f"Unknown LLM backend: {backend}")
-            logger.info(f"LLM backend initialized: {backend}")
+            logger.info(
+                "LLM backend initialized: %s (environment=%s)",
+                backend,
+                settings.ENVIRONMENT,
+            )
         return self._backend
 
     async def generate(
