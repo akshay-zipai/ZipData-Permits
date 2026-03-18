@@ -5,6 +5,8 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
+ARG APP_ENV=dev
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc g++ git curl \
     && rm -rf /var/lib/apt/lists/*
@@ -13,11 +15,19 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
+COPY requirements-ec2-lite.txt .
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    if [ "$APP_ENV" = "production" ]; then \
+        pip install --no-cache-dir -r requirements-ec2-lite.txt; \
+    else \
+        pip install --no-cache-dir -r requirements.txt; \
+    fi
 
-# Install only chromium browser, skip fonts (causes missing package errors on slim)
-RUN playwright install chromium
+# Install browser tooling only for non-production builds.
+RUN mkdir -p /root/.cache/ms-playwright && \
+    if [ "$APP_ENV" != "production" ]; then \
+        playwright install chromium; \
+    fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: runtime
@@ -26,28 +36,32 @@ FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Chromium runtime system dependencies (no font packages)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libnss3 \
-    libnspr4 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libcups2 \
-    libdrm2 \
-    libxkbcommon0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    libgbm1 \
-    libasound2 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libx11-6 \
-    libxext6 \
-    libxshmfence1 \
-    && rm -rf /var/lib/apt/lists/*
+ARG APP_ENV=dev
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    if [ "$APP_ENV" != "production" ]; then \
+        apt-get install -y --no-install-recommends \
+            libnss3 \
+            libnspr4 \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libxkbcommon0 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxfixes3 \
+            libxrandr2 \
+            libgbm1 \
+            libasound2 \
+            libpango-1.0-0 \
+            libcairo2 \
+            libx11-6 \
+            libxext6 \
+            libxshmfence1; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy venv + playwright browsers from builder
 COPY --from=builder /opt/venv /opt/venv

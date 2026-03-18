@@ -5,11 +5,12 @@ version: "3.9"
 #
 # Services:
 #   api     — FastAPI application (crawling, RAG, LLM inference, WebSocket)
-#   ollama  — Local LLM server running Gemma 3 4B
+#   ollama  — Optional local LLM server for non-production use
 #
 # Usage:
-#   docker compose up --build          # start all services
-#   docker compose up api              # start only the API (uses remote LLM)
+#   docker compose up --build api                              # production-friendly API only
+#   docker compose --profile local-llm up --build             # local dev with Ollama
+#   docker compose --profile local-llm up --build api ollama  # explicit local services
 #   docker compose logs -f api         # stream API logs
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ca_permit_ollama
+    profiles: ["local-llm"]
     restart: unless-stopped
     ports:
       - "11434:11434"
@@ -53,6 +55,8 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+      args:
+        APP_ENV: ${ENVIRONMENT:-dev}
     container_name: ca_permit_api
     restart: unless-stopped
     ports:
@@ -70,9 +74,6 @@ services:
       - crosswalk_data:/app/data
       # Output directory
       - ./output:/app/output
-    depends_on:
-      ollama:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
