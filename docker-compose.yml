@@ -57,6 +57,7 @@ services:
       target: runtime
       args:
         APP_ENV: ${ENVIRONMENT:-dev}
+        ENABLE_LOCAL_RAG: ${ENABLE_LOCAL_RAG:-false}
     container_name: ca_permit_api
     restart: unless-stopped
     ports:

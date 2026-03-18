@@ -6,6 +6,7 @@ FROM python:3.11-slim AS builder
 WORKDIR /build
 
 ARG APP_ENV=dev
+ARG ENABLE_LOCAL_RAG=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc g++ git curl \
@@ -17,7 +18,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements.txt .
 COPY requirements-ec2-lite.txt .
 RUN pip install --upgrade pip && \
-    if [ "$APP_ENV" = "production" ]; then \
+    if [ "$ENABLE_LOCAL_RAG" = "true" ] || [ "$ENABLE_LOCAL_RAG" = "True" ]; then \
+        pip install --no-cache-dir -r requirements.txt; \
+    elif [ "$APP_ENV" = "production" ]; then \
         pip install --no-cache-dir -r requirements-ec2-lite.txt; \
     else \
         pip install --no-cache-dir -r requirements.txt; \
@@ -25,7 +28,7 @@ RUN pip install --upgrade pip && \
 
 # Install browser tooling only for non-production builds.
 RUN mkdir -p /root/.cache/ms-playwright && \
-    if [ "$APP_ENV" != "production" ]; then \
+    if [ "$ENABLE_LOCAL_RAG" = "true" ] || [ "$ENABLE_LOCAL_RAG" = "True" ] || [ "$APP_ENV" != "production" ]; then \
         playwright install chromium; \
     fi
 
@@ -37,10 +40,11 @@ FROM python:3.11-slim AS runtime
 WORKDIR /app
 
 ARG APP_ENV=dev
+ARG ENABLE_LOCAL_RAG=false
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
-    if [ "$APP_ENV" != "production" ]; then \
+    if [ "$ENABLE_LOCAL_RAG" = "true" ] || [ "$ENABLE_LOCAL_RAG" = "True" ] || [ "$APP_ENV" != "production" ]; then \
         apt-get install -y --no-install-recommends \
             libnss3 \
             libnspr4 \
