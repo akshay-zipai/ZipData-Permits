@@ -2,6 +2,7 @@
 RAG Retriever — Hybrid BM25 (keyword) + ChromaDB (semantic) retrieval.
 Scores are combined with configurable weights from settings.
 """
+import importlib.util
 import uuid
 import time
 from typing import Optional
@@ -19,6 +20,11 @@ settings = get_settings()
 class RetrieverService:
     def __init__(self):
         self._enabled = settings.ENABLE_LOCAL_RAG
+        if self._enabled and importlib.util.find_spec("chromadb") is None:
+            logger.warning(
+                "Local RAG requested but chromadb is not installed; disabling local RAG."
+            )
+            self._enabled = False
         self._chroma_client = None
         self._collection = None
         self._bm25_corpus: list[str] = []
