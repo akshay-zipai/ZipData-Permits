@@ -22,6 +22,17 @@ settings = get_settings()
 router = APIRouter(tags=["WebSocket"])
 
 
+def _normalize_optional_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.lower() in {"string", "none", "null"}:
+        return None
+    return normalized
+
+
 class ConnectionManager:
     """Manages active WebSocket connections."""
 
@@ -96,8 +107,8 @@ async def permit_qa_ws(websocket: WebSocket):
 
             try:
                 # Resolve county context
-                county_name = question_req.county_name
-                zip_code = question_req.zip_code
+                county_name = _normalize_optional_value(question_req.county_name)
+                zip_code = _normalize_optional_value(question_req.zip_code)
 
                 if not county_name and zip_code:
                     await manager.send_json(

@@ -20,6 +20,17 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 
+def _normalize_optional_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.lower() in {"string", "none", "null"}:
+        return None
+    return normalized
+
+
 def _load_prompt(filename: str) -> str:
     path = settings.PROMPTS_DIR / filename
     if path.exists():
@@ -164,7 +175,7 @@ class RAGPipeline:
         overall_start = time.perf_counter()
 
         # Resolve county name
-        county_name = request.county_name
+        county_name = _normalize_optional_value(request.county_name)
         if not county_name and request.zip_code:
             county_name = zip_to_county(request.zip_code)
             if not county_name:

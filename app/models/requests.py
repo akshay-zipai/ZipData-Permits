@@ -10,7 +10,7 @@ class CrawlByZipRequest(BaseModel):
 
 
 class CrawlByCountyRequest(BaseModel):
-    county_name: str = Field(..., examples=["San Francisco County"])
+    county_name: str = Field(..., examples=["Los Angeles County"])
     force_refresh: bool = False
 
 
@@ -23,16 +23,16 @@ class CrawlByUrlRequest(BaseModel):
 # ── RAG ───────────────────────────────────────────────────────────────────────
 
 class IndexRequest(BaseModel):
-    county_name: str = Field(..., examples=["San Francisco County"])
+    county_name: str = Field(..., examples=["Los Angeles County"])
     content: str = Field(..., description="Raw text content to index")
     source_url: Optional[str] = None
     metadata: Optional[dict] = None
 
 
 class RAGQueryRequest(BaseModel):
-    question: str = Field(..., min_length=3, max_length=2000)
+    question: str = Field(..., min_length=3, max_length=2000, examples=["What permits do I need to install rooftop solar panels?"])
     zip_code: Optional[str] = Field(None, pattern=r"^\d{5}$")
-    county_name: Optional[str] = None
+    county_name: Optional[str] = Field(None, examples=["Los Angeles County"])
     top_k: int = Field(5, ge=1, le=20)
     include_sources: bool = True
 
