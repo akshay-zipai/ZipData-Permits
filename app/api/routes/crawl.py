@@ -7,9 +7,11 @@ from app.services.crawling.crawler import get_crawler_service, CrawlerService
 from app.services.rag.retriever import get_retriever_service, RetrieverService
 from app.utils.permit_portals import get_portal_url, list_counties, get_all_portals
 from app.utils.zip_lookup import zip_to_county
+from app.core.config import get_settings
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
+settings = get_settings()
 router = APIRouter(prefix="/crawl", tags=["Crawling"])
 
 
@@ -28,6 +30,11 @@ async def crawl_by_zip(
     crawler: CrawlerService = Depends(_get_crawler),
     retriever: RetrieverService = Depends(_get_retriever),
 ):
+    if auto_index and not settings.ENABLE_LOCAL_RAG:
+        raise HTTPException(
+            status_code=503,
+            detail="Auto-indexing is disabled because local RAG is disabled in this environment.",
+        )
     county_name = zip_to_county(request.zip_code)
     if not county_name:
         raise HTTPException(
@@ -65,6 +72,11 @@ async def crawl_by_county(
     crawler: CrawlerService = Depends(_get_crawler),
     retriever: RetrieverService = Depends(_get_retriever),
 ):
+    if auto_index and not settings.ENABLE_LOCAL_RAG:
+        raise HTTPException(
+            status_code=503,
+            detail="Auto-indexing is disabled because local RAG is disabled in this environment.",
+        )
     portal_url = get_portal_url(request.county_name)
     if not portal_url:
         raise HTTPException(
@@ -95,6 +107,11 @@ async def crawl_by_url(
     crawler: CrawlerService = Depends(_get_crawler),
     retriever: RetrieverService = Depends(_get_retriever),
 ):
+    if auto_index and not settings.ENABLE_LOCAL_RAG:
+        raise HTTPException(
+            status_code=503,
+            detail="Auto-indexing is disabled because local RAG is disabled in this environment.",
+        )
     county_name = request.county_name or "Unknown County"
     result = await crawler.crawl_url(str(request.url), county_name, request.force_refresh)
 
@@ -177,6 +194,11 @@ async def manual_index(
     Bypass crawling entirely — paste raw permit text directly.
     Useful when the portal blocks scrapers.
     """
+    if not settings.ENABLE_LOCAL_RAG:
+        raise HTTPException(
+            status_code=503,
+            detail="Manual indexing is disabled because local RAG is disabled in this environment.",
+        )
     if len(text.split()) < 10:
         raise HTTPException(status_code=400, detail="Text too short (min 10 words)")
 

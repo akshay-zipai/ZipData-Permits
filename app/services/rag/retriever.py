@@ -18,6 +18,7 @@ settings = get_settings()
 
 class RetrieverService:
     def __init__(self):
+        self._enabled = settings.ENABLE_LOCAL_RAG
         self._chroma_client = None
         self._collection = None
         self._bm25_corpus: list[str] = []
@@ -27,6 +28,8 @@ class RetrieverService:
     # ── ChromaDB setup ────────────────────────────────────────────────────────
 
     def _get_collection(self):
+        if not self._enabled:
+            raise RuntimeError("Local RAG is disabled in this environment.")
         if self._collection is None:
             import chromadb
 
@@ -64,6 +67,8 @@ class RetrieverService:
         extra_metadata: Optional[dict] = None,
     ) -> int:
         """Chunk and index content into ChromaDB and BM25. Returns chunk count."""
+        if not self._enabled:
+            raise RuntimeError("Local RAG indexing is disabled in this environment.")
         collection = self._get_collection()
         embedder = get_embedding_service()
 
@@ -108,6 +113,9 @@ class RetrieverService:
         top_k: int = None,
         county_filter: Optional[str] = None,
     ) -> list[RetrievedChunk]:
+        if not self._enabled:
+            logger.info("Local RAG retrieval is disabled; returning no local chunks.")
+            return []
         top_k = top_k or settings.RAG_TOP_K
         vector_results = self._vector_search(query, top_k * 2, county_filter)
         bm25_results = self._bm25_search(query, top_k * 2, county_filter)
@@ -232,9 +240,17 @@ class RetrieverService:
         return results
 
     def get_collection_stats(self) -> dict:
+        if not self._enabled:
+            return {
+                "enabled": False,
+                "total_chunks": 0,
+                "bm25_corpus_size": 0,
+                "collection_name": settings.CHROMA_COLLECTION_NAME,
+            }
         try:
             col = self._get_collection()
             return {
+                "enabled": True,
                 "total_chunks": col.count(),
                 "bm25_corpus_size": len(self._bm25_corpus),
                 "collection_name": settings.CHROMA_COLLECTION_NAME,

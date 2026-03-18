@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     BEDROCK_MODEL_ID: str = "google.gemma-3-12b-it"
     BEDROCK_REGION: str = "us-east-1"
     BEDROCK_READ_TIMEOUT: int = 300
+    ENABLE_LOCAL_RAG: bool = True
+    ENABLE_AUTO_CRAWL: bool = True
 
     # HuggingFace fallback (if LLM_BACKEND=huggingface)
     HF_MODEL_NAME: str = "google/gemma-3-4b-it"

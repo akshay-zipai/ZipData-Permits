@@ -6,9 +6,9 @@ data/zip_county_crosswalk.csv for California ZIPs.
 Run standalone:  python scripts/download_crosswalk.py
 Auto-run by:     scripts/entrypoint.sh on container start
 """
+import csv
 import sys
 import requests
-import pandas as pd
 from pathlib import Path
 from io import StringIO
 
@@ -31,30 +31,30 @@ def download_crosswalk() -> None:
         print(f"ERROR: Failed to download crosswalk: {e}", file=sys.stderr)
         sys.exit(1)
 
-    df = pd.read_csv(StringIO(resp.text), sep="|", dtype=str)
+    reader = csv.DictReader(StringIO(resp.text), delimiter="|")
+    rows: dict[str, dict[str, str]] = {}
 
-    # Normalize column names
-    df.columns = [c.strip().upper() for c in df.columns]
+    for row in reader:
+        county_fips = (row.get("GEOID_COUNTY_20") or "").strip()
+        if not county_fips.startswith(CA_FIPS_PREFIX):
+            continue
 
-    # Keep only California rows (FIPS county code starts with "06")
-    ca_mask = df["GEOID_COUNTY_20"].str[:2] == CA_FIPS_PREFIX
-    df = df[ca_mask].copy()
+        zip_code = (row.get("GEOID_ZCTA5_20") or "").strip().zfill(5)
+        county = (row.get("NAMELSAD_COUNTY_20") or "").strip()
+        if zip_code and county and zip_code not in rows:
+            rows[zip_code] = {"zip": zip_code, "county": county, "state": "CA"}
 
-    if df.empty:
+    if not rows:
         print("ERROR: No California rows found in crosswalk.", file=sys.stderr)
         sys.exit(1)
 
-    # Build output dataframe
-    out = pd.DataFrame()
-    out["zip"]    = df["GEOID_ZCTA5_20"].str.zfill(5)
-    out["county"] = df["NAMELSAD_COUNTY_20"].str.strip()
-    out["state"]  = "CA"
+    with open(OUTPUT_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["zip", "county", "state"])
+        writer.writeheader()
+        for zip_code in sorted(rows):
+            writer.writerow(rows[zip_code])
 
-    # Remove duplicates (a ZIP can span multiple counties — keep first/largest)
-    out = out.drop_duplicates(subset=["zip"]).sort_values("zip").reset_index(drop=True)
-
-    out.to_csv(OUTPUT_PATH, index=False)
-    print(f"Saved {len(out)} CA ZIP codes to {OUTPUT_PATH}")
+    print(f"Saved {len(rows)} CA ZIP codes to {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":

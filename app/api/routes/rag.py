@@ -51,6 +51,13 @@ async def index_content(
     retriever: RetrieverService = Depends(_get_retriever),
 ):
     """Index raw text content for a county into the vector database."""
+    from app.core.config import get_settings
+    settings = get_settings()
+    if not settings.ENABLE_LOCAL_RAG:
+        raise HTTPException(
+            status_code=503,
+            detail="Local RAG indexing is disabled in this environment.",
+        )
     try:
         chunks = retriever.index_content(
             content=request.content,
@@ -58,11 +65,10 @@ async def index_content(
             source_url=request.source_url,
             extra_metadata=request.metadata,
         )
-        from app.core.config import get_settings
         return IndexResponse(
             county_name=request.county_name,
             chunks_indexed=chunks,
-            collection_name=get_settings().CHROMA_COLLECTION_NAME,
+            collection_name=settings.CHROMA_COLLECTION_NAME,
             success=True,
         )
     except Exception as e:

@@ -93,7 +93,7 @@ class RAGPipeline:
         )
 
         # If no results and we have a county, auto-crawl and index
-        if not chunks and county_name:
+        if not chunks and county_name and settings.ENABLE_LOCAL_RAG and settings.ENABLE_AUTO_CRAWL:
             logger.info(f"No indexed content for {county_name}. Auto-crawling...")
             chunks = await self._auto_crawl_and_retrieve(
                 county_name, request.question, request.top_k

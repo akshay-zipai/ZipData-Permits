@@ -27,6 +27,9 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"LLM backend: {settings.LLM_BACKEND} | model: {settings.LLM_MODEL_NAME}")
     logger.info(f"Embedding model: {settings.EMBEDDING_MODEL_NAME}")
+    logger.info(
+        f"Local RAG enabled: {settings.ENABLE_LOCAL_RAG} | auto-crawl enabled: {settings.ENABLE_AUTO_CRAWL}"
+    )
 
     # Ensure output directories exist
     settings.DATA_DIR.mkdir(parents=True, exist_ok=True)

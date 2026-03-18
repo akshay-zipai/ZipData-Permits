@@ -112,7 +112,12 @@ async def permit_qa_ws(websocket: WebSocket):
                 retriever = get_retriever_service()
                 stats = retriever.get_collection_stats()
 
-                if stats.get("total_chunks", 0) == 0 and county_name:
+                if (
+                    settings.ENABLE_LOCAL_RAG
+                    and settings.ENABLE_AUTO_CRAWL
+                    and stats.get("total_chunks", 0) == 0
+                    and county_name
+                ):
                     await manager.send_json(
                         session_id,
                         WSMessage(type="status", content={"message": f"Crawling permit portal for {county_name}…"}, session_id=session_id),
@@ -144,13 +149,15 @@ async def permit_qa_ws(websocket: WebSocket):
                     effective_county = _zip2county(zip_code)
 
                 retriever = get_retriever_service()
-                chunks = retriever.retrieve(
-                    query=question_req.question,
-                    top_k=settings.RAG_TOP_K,
-                    county_filter=effective_county,
-                )
+                chunks = []
+                if settings.ENABLE_LOCAL_RAG:
+                    chunks = retriever.retrieve(
+                        query=question_req.question,
+                        top_k=settings.RAG_TOP_K,
+                        county_filter=effective_county,
+                    )
 
-                if not chunks and effective_county:
+                if not chunks and effective_county and settings.ENABLE_LOCAL_RAG and settings.ENABLE_AUTO_CRAWL:
                     from app.utils.permit_portals import get_portal_url
                     from app.services.crawling.crawler import get_crawler_service
 

@@ -3,7 +3,6 @@ Embedding Service — SBERT all-MiniLM-L12-v2 (default).
 Swap the model by changing EMBEDDING_MODEL_NAME in .env.
 """
 from typing import Optional
-import numpy as np
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
