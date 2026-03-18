@@ -194,6 +194,13 @@ class CrawlerService:
         force_refresh: bool = False,
     ) -> CrawlResponse:
         cache_key = hashlib.md5(url.encode()).hexdigest()
+        logger.info(
+            "Starting crawl for county=%s portal=%s force_refresh=%s max_pages=%s",
+            county_name,
+            url,
+            force_refresh,
+            settings.CRAWL_MAX_PAGES_PER_DOMAIN,
+        )
 
         if not force_refresh and cache_key in _crawl_cache:
             logger.info(f"Cache hit for {url}")
@@ -224,15 +231,32 @@ class CrawlerService:
                     html_snapshot = page.html_content or ""
                     new_links = _extract_links(html_snapshot, current_url, base_domain)
                     pdf_links = _extract_pdf_links(html_snapshot, current_url)
+                    logger.info(
+                        "Crawl page success url=%s title=%s words=%s discovered_links=%s discovered_pdfs=%s",
+                        page.url,
+                        page.title or "n/a",
+                        page.word_count,
+                        len(new_links),
+                        len(pdf_links),
+                    )
                     to_visit.extend(lnk for lnk in new_links if lnk not in visited)
                     to_visit.extend(lnk for lnk in pdf_links if lnk not in visited)
                     # Clear html_content after link extraction to save memory
                     page.html_content = None
+                else:
+                    logger.info("Crawl page skipped or empty url=%s", current_url)
 
                 await asyncio.sleep(settings.CRAWL_DELAY_SECONDS)
 
         elapsed = time.perf_counter() - start
-        logger.info(f"Crawled {len(pages)} pages from {url} in {elapsed:.1f}s")
+        logger.info(
+            "Crawl finished county=%s portal=%s pages=%s total_words=%s duration=%.1fs",
+            county_name,
+            url,
+            len(pages),
+            sum(p.word_count for p in pages),
+            elapsed,
+        )
 
         if not pages:
             logger.warning(

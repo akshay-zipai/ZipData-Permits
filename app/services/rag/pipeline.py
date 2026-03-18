@@ -90,6 +90,14 @@ class RAGPipeline:
         county_name: Optional[str],
         top_k: int,
     ) -> list[RetrievedChunk]:
+        logger.info(
+            "Retrieval start county=%s top_k=%s local_rag=%s auto_crawl=%s question=%s",
+            county_name,
+            top_k,
+            settings.ENABLE_LOCAL_RAG,
+            settings.ENABLE_AUTO_CRAWL,
+            question[:160],
+        )
         if settings.ENABLE_LOCAL_RAG:
             retriever = get_retriever_service()
             chunks = retriever.retrieve(
@@ -143,6 +151,14 @@ class RAGPipeline:
             logger.error(f"On-demand crawl failed for {county_name}: {e}")
             return []
 
+        logger.info(
+            "On-demand crawl summary county=%s pages=%s total_words=%s portal=%s",
+            county_name,
+            crawl_result.total_pages,
+            crawl_result.total_words,
+            portal_url,
+        )
+
         ranked: list[RetrievedChunk] = []
         for page in crawl_result.pages:
             if not page.text_content:
@@ -169,7 +185,24 @@ class RAGPipeline:
             len(ranked),
             county_name,
         )
-        return ranked[:top_k]
+        selected = ranked[:top_k]
+        if selected:
+            for idx, chunk in enumerate(selected, 1):
+                logger.info(
+                    "Selected chunk %s county=%s score=%.4f source=%s preview=%s",
+                    idx,
+                    county_name,
+                    chunk.score,
+                    chunk.source_url or "unknown",
+                    chunk.content[:220].replace("\n", " "),
+                )
+        else:
+            logger.warning(
+                "No relevant chunks selected for county=%s question=%s",
+                county_name,
+                question[:160],
+            )
+        return selected
 
     async def answer(self, request: RAGQueryRequest) -> RAGQueryResponse:
         overall_start = time.perf_counter()
@@ -196,6 +229,13 @@ class RAGPipeline:
         llm = get_llm_service()
         prompt = self._build_prompt(request.question, chunks, county_name)
         system_prompt = self._get_system_prompt()
+        logger.info(
+            "Prompt assembled county=%s chunks=%s context_chars=%s system_prompt_chars=%s",
+            county_name,
+            len(chunks),
+            len(prompt),
+            len(system_prompt or ""),
+        )
 
         llm_response = await llm.generate(
             prompt=prompt,
