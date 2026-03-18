@@ -15,7 +15,7 @@ from pathlib import Path
 
 CROSSWALK_PATH = Path("data/zip_county_crosswalk.csv")
 PERMIT_PORTAL_PATH = Path("data/permit_portals.json")
-OUTPUT_PATH = Path("output/california_permit_mapping.json")
+OUTPUT_PATH = Path(os.getenv("PERMIT_MAPPING_OUTPUT_PATH", "output/california_permit_mapping.json"))
 STATE_FILTER = "CA"
 
 

@@ -4,6 +4,9 @@
 
 set -e
 
+APP_ENV="${ENVIRONMENT:-dev}"
+SKIP_PERMIT_MAPPING="${SKIP_PERMIT_MAPPING:-false}"
+
 echo "============================================"
 echo " CA Permit RAG System — Starting Up"
 echo "============================================"
@@ -17,8 +20,12 @@ else
 fi
 
 # ── Step 2: Permit mapping JSON ───────────────────────────────────────────────
-echo "[2/3] Generating CA permit mapping..."
-python generate_ca_permit_mapping.py
+if [ "$SKIP_PERMIT_MAPPING" = "true" ] || [ "$APP_ENV" = "production" ]; then
+    echo "[2/3] Skipping CA permit mapping generation."
+else
+    echo "[2/3] Generating CA permit mapping..."
+    python generate_ca_permit_mapping.py
+fi
 
 # ── Step 3: Start API ─────────────────────────────────────────────────────────
 echo "[3/3] Starting FastAPI server..."
