@@ -20,7 +20,6 @@ wheels/
 *.so
 
 # Env
-.env
 *.env.local
 
 # Virtual envs
