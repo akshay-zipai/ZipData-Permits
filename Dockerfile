@@ -19,7 +19,9 @@ COPY requirements.txt .
 COPY requirements-ec2-lite.txt .
 RUN pip install --upgrade pip && \
     if [ "$ENABLE_LOCAL_RAG" = "true" ] || [ "$ENABLE_LOCAL_RAG" = "True" ]; then \
-        pip install --no-cache-dir -r requirements.txt; \
+        pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple torch==2.5.1 torchvision==0.20.1 && \
+        grep -vE '^(torch|torchvision)==.*$' requirements.txt > /tmp/requirements-no-torch.txt && \
+        pip install --no-cache-dir -r /tmp/requirements-no-torch.txt; \
     elif [ "$APP_ENV" = "production" ]; then \
         pip install --no-cache-dir -r requirements-ec2-lite.txt; \
     else \
