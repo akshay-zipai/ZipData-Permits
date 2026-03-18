@@ -107,22 +107,6 @@ async def permit_qa_ws(websocket: WebSocket):
                     from app.utils.zip_lookup import zip_to_county
                     county_name = zip_to_county(zip_code)
 
-                # Check/trigger crawl if needed
-                from app.services.rag.retriever import get_retriever_service
-                retriever = get_retriever_service()
-                stats = retriever.get_collection_stats()
-
-                if (
-                    settings.ENABLE_LOCAL_RAG
-                    and settings.ENABLE_AUTO_CRAWL
-                    and stats.get("total_chunks", 0) == 0
-                    and county_name
-                ):
-                    await manager.send_json(
-                        session_id,
-                        WSMessage(type="status", content={"message": f"Crawling permit portal for {county_name}…"}, session_id=session_id),
-                    )
-
                 await manager.send_json(
                     session_id,
                     WSMessage(type="status", content={"message": "Retrieving relevant permit information…"}, session_id=session_id),
@@ -140,39 +124,23 @@ async def permit_qa_ws(websocket: WebSocket):
 
                 pipeline = get_rag_pipeline()
 
-                # Retrieve chunks first
-                from app.services.rag.retriever import get_retriever_service
                 from app.utils.zip_lookup import zip_to_county as _zip2county
 
                 effective_county = county_name
                 if not effective_county and zip_code:
                     effective_county = _zip2county(zip_code)
 
-                retriever = get_retriever_service()
-                chunks = []
-                if settings.ENABLE_LOCAL_RAG:
-                    chunks = retriever.retrieve(
-                        query=question_req.question,
-                        top_k=settings.RAG_TOP_K,
-                        county_filter=effective_county,
+                if effective_county and settings.ENABLE_AUTO_CRAWL:
+                    await manager.send_json(
+                        session_id,
+                        WSMessage(type="status", content={"message": f"Collecting permit content for {effective_county}…"}, session_id=session_id),
                     )
 
-                if not chunks and effective_county and settings.ENABLE_LOCAL_RAG and settings.ENABLE_AUTO_CRAWL:
-                    from app.utils.permit_portals import get_portal_url
-                    from app.services.crawling.crawler import get_crawler_service
-
-                    portal_url = get_portal_url(effective_county)
-                    if portal_url:
-                        await manager.send_json(
-                            session_id,
-                            WSMessage(type="status", content={"message": f"Auto-crawling {portal_url}…"}, session_id=session_id),
-                        )
-                        crawler = get_crawler_service()
-                        crawl_result = await crawler.crawl_url(portal_url, effective_county)
-                        for page in crawl_result.pages:
-                            if page.text_content:
-                                retriever.index_content(page.text_content, effective_county, page.url)
-                        chunks = retriever.retrieve(question_req.question, settings.RAG_TOP_K, effective_county)
+                chunks = await pipeline.retrieve_context(
+                    question=question_req.question,
+                    county_name=effective_county,
+                    top_k=settings.RAG_TOP_K,
+                )
 
                 # Stream the answer
                 await manager.send_json(

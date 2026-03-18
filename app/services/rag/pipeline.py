@@ -1,8 +1,8 @@
 """
 RAG Pipeline — orchestrates crawl → index → retrieve → generate flow.
 """
+import re
 import time
-from pathlib import Path
 from typing import Optional
 
 from app.core.config import get_settings
@@ -14,7 +14,7 @@ from app.services.rag.retriever import get_retriever_service
 from app.services.llm.generator import get_llm_service
 from app.utils.permit_portals import get_portal_url
 from app.utils.zip_lookup import zip_to_county
-from app.utils.text_processing import truncate_text
+from app.utils.text_processing import chunk_text, clean_text
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -73,6 +73,93 @@ class RAGPipeline:
             f"Answer:"
         )
 
+    async def retrieve_context(
+        self,
+        question: str,
+        county_name: Optional[str],
+        top_k: int,
+    ) -> list[RetrievedChunk]:
+        if settings.ENABLE_LOCAL_RAG:
+            retriever = get_retriever_service()
+            chunks = retriever.retrieve(
+                query=question,
+                top_k=top_k,
+                county_filter=county_name,
+            )
+            if not chunks and county_name and settings.ENABLE_AUTO_CRAWL:
+                logger.info(f"No indexed content for {county_name}. Auto-crawling...")
+                chunks = await self._auto_crawl_and_retrieve(
+                    county_name, question, top_k
+                )
+            return chunks
+
+        if county_name and settings.ENABLE_AUTO_CRAWL:
+            logger.info("Local RAG disabled; using on-demand crawl retrieval for %s", county_name)
+            return await self._crawl_and_rank(
+                county_name=county_name,
+                question=question,
+                top_k=top_k,
+            )
+
+        return []
+
+    def _score_chunk(self, question: str, chunk: str) -> float:
+        question_terms = re.findall(r"\w+", question.lower())
+        chunk_terms = re.findall(r"\w+", chunk.lower())
+        if not question_terms or not chunk_terms:
+            return 0.0
+
+        chunk_term_set = set(chunk_terms)
+        overlap = sum(1 for term in question_terms if term in chunk_term_set)
+        phrase_bonus = 1 if question.lower() in chunk.lower() else 0
+        return float(overlap + phrase_bonus)
+
+    async def _crawl_and_rank(
+        self,
+        county_name: str,
+        question: str,
+        top_k: int,
+    ) -> list[RetrievedChunk]:
+        portal_url = get_portal_url(county_name)
+        if not portal_url:
+            logger.warning(f"No portal URL for {county_name}")
+            return []
+
+        crawler = get_crawler_service()
+        try:
+            crawl_result = await crawler.crawl_url(portal_url, county_name)
+        except Exception as e:
+            logger.error(f"On-demand crawl failed for {county_name}: {e}")
+            return []
+
+        ranked: list[RetrievedChunk] = []
+        for page in crawl_result.pages:
+            if not page.text_content:
+                continue
+            for idx, chunk in enumerate(chunk_text(clean_text(page.text_content))):
+                score = self._score_chunk(question, chunk)
+                if score <= 0:
+                    continue
+                ranked.append(
+                    RetrievedChunk(
+                        content=chunk,
+                        source_url=page.url,
+                        county_name=county_name,
+                        score=round(score, 4),
+                        retrieval_method="crawl",
+                        chunk_id=f"{page.url}#{idx}",
+                        metadata={"title": page.title, "word_count": page.word_count},
+                    )
+                )
+
+        ranked.sort(key=lambda item: item.score, reverse=True)
+        logger.info(
+            "On-demand crawl retrieval produced %s relevant chunks for %s",
+            len(ranked),
+            county_name,
+        )
+        return ranked[:top_k]
+
     async def answer(self, request: RAGQueryRequest) -> RAGQueryResponse:
         overall_start = time.perf_counter()
 
@@ -85,19 +172,11 @@ class RAGPipeline:
 
         # Retrieve
         retrieval_start = time.perf_counter()
-        retriever = get_retriever_service()
-        chunks = retriever.retrieve(
-            query=request.question,
+        chunks = await self.retrieve_context(
+            question=request.question,
+            county_name=county_name,
             top_k=request.top_k,
-            county_filter=county_name,
         )
-
-        # If no results and we have a county, auto-crawl and index
-        if not chunks and county_name and settings.ENABLE_LOCAL_RAG and settings.ENABLE_AUTO_CRAWL:
-            logger.info(f"No indexed content for {county_name}. Auto-crawling...")
-            chunks = await self._auto_crawl_and_retrieve(
-                county_name, request.question, request.top_k
-            )
 
         retrieval_ms = (time.perf_counter() - retrieval_start) * 1000
 
