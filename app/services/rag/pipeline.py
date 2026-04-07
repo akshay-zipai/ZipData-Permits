@@ -12,6 +12,8 @@ from app.models.responses import RAGQueryResponse, RetrievedChunk
 from app.services.crawling.crawler import get_crawler_service
 from app.services.rag.retriever import get_retriever_service
 from app.services.llm.generator import get_llm_service
+from app.services.rag.s3_kb import get_s3_kb
+from app.services.rag.file_kb import get_file_kb
 from app.utils.permit_portals import get_portal_url
 from app.utils.zip_lookup import zip_to_county
 from app.utils.text_processing import chunk_text, clean_text
@@ -98,6 +100,20 @@ class RAGPipeline:
             settings.ENABLE_AUTO_CRAWL,
             question[:160],
         )
+        # Prefer a local file-backed Bedrock KB (generated JSONL) if present.
+        file_kb = get_file_kb()
+        if file_kb is not None:
+            chunks = file_kb.retrieve(query=question, top_k=top_k, county_filter=county_name)
+            logger.info(f"File KB retrieval returned {len(chunks)} chunks for county={county_name}")
+            return chunks
+
+        # Prefer S3-backed knowledge base when enabled — use BM25 over the uploaded dataset.
+        if settings.S3_KB_ENABLED or settings.S3_KB_BUCKET:
+            s3kb = get_s3_kb()
+            chunks = s3kb.retrieve(query=question, top_k=top_k, county_filter=county_name)
+            logger.info(f"S3 KB retrieval returned {len(chunks)} chunks for county={county_name}")
+            return chunks
+
         if settings.ENABLE_LOCAL_RAG:
             retriever = get_retriever_service()
             chunks = retriever.retrieve(

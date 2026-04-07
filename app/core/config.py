@@ -1,10 +1,14 @@
 from pydantic_settings import BaseSettings
+from pydantic import ConfigDict
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    # Ignore extra environment variables so unexpected keys in `.env`
+    # do not cause a ValidationError when loading settings.
+    model_config = ConfigDict(extra="ignore")
     # App
     APP_NAME: str = "CA Permit RAG System"
     APP_VERSION: str = "1.0.0"
@@ -77,14 +81,23 @@ class Settings(BaseSettings):
     RAG_CHUNK_SIZE: int = 512
     RAG_CHUNK_OVERLAP: int = 64
 
+    # S3-backed Knowledge Base (offline dataset)
+    S3_KB_ENABLED: bool = False
+    S3_KB_BUCKET: Optional[str] = None
+    S3_KB_PREFIX: Optional[str] = None
+    S3_KB_MANIFEST_KEY: Optional[str] = None  # optional manifest JSON key in bucket
+    S3_REGION_NAME: Optional[str] = None
+
     # WebSocket
     WS_PING_INTERVAL: int = 30
     WS_MAX_MESSAGE_SIZE: int = 65536
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    model_config = ConfigDict(
+        extra="ignore",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+    )
 
 
 @lru_cache()

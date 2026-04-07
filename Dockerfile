@@ -7,6 +7,7 @@ WORKDIR /build
 
 ARG APP_ENV=dev
 ARG ENABLE_LOCAL_RAG=false
+ARG PRELOAD_HF_MODEL=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc g++ git curl \
@@ -27,6 +28,12 @@ RUN pip install --upgrade pip && \
     else \
         pip install --no-cache-dir -r requirements.txt; \
     fi
+
+# Optionally preload a HuggingFace model into the wheelhouse/cache to avoid
+# long downloads at first runtime. Set build-arg PRELOAD_HF_MODEL=true to enable.
+RUN if [ "$PRELOAD_HF_MODEL" = "true" ]; then \
+    python -c "from transformers import AutoTokenizer, AutoModelForCausalLM; model='google/gemma-3-4b-it'; print('Downloading', model); AutoTokenizer.from_pretrained(model); AutoModelForCausalLM.from_pretrained(model)"; \
+fi
 
 # Install browser tooling only for non-production builds.
 RUN mkdir -p /root/.cache/ms-playwright && \

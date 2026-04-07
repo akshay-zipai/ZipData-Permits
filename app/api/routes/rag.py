@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 
 from app.models.requests import RAGQueryRequest, IndexRequest
 from app.models.responses import RAGQueryResponse, IndexResponse
+from app.models.responses import PreviewResponse
 from app.services.rag.pipeline import get_rag_pipeline, RAGPipeline
 from app.services.rag.retriever import get_retriever_service, RetrieverService
 from app.core.logging import get_logger
@@ -38,6 +39,41 @@ async def rag_query(
         return await pipeline.answer(request)
     except Exception as e:
         logger.error(f"RAG query failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/preview",
+    response_model=PreviewResponse,
+    summary="Preview retrieved contexts for a ZIP or county (no LLM)",
+)
+async def rag_preview(
+    request: RAGQueryRequest,
+    pipeline: RAGPipeline = Depends(_get_pipeline),
+):
+    """Return the top retrieved chunks for the given ZIP or county without calling the LLM."""
+    try:
+        county_name = request.county_name
+        if not county_name and request.zip_code:
+            from app.utils.zip_lookup import zip_to_county
+
+            county_name = zip_to_county(request.zip_code)
+
+        chunks = await pipeline.retrieve_context(
+            question=request.question or "",
+            county_name=county_name,
+            top_k=request.top_k,
+        )
+
+        return PreviewResponse(
+            question=request.question,
+            county_name=county_name,
+            zip_code=request.zip_code,
+            sources=chunks,
+            retrieved_count=len(chunks),
+        )
+    except Exception as e:
+        logger.error(f"RAG preview failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -377,9 +377,20 @@ class LLMService:
 
     def _resolve_backend_name(self) -> str:
         environment = settings.ENVIRONMENT.lower()
+
+        # Environments: production => Bedrock by default, development => local model (Ollama) by default
+        explicit = (settings.LLM_BACKEND or "").lower()
+
         if environment in {"prod", "production"}:
+            # Production must use Bedrock unless explicitly set to a different remote backend.
+            if explicit and explicit != "bedrock":
+                return explicit
             return "bedrock"
-        return settings.LLM_BACKEND.lower()
+
+        # Development (and other non-production) — prefer explicit backend, else use Ollama
+        if explicit:
+            return explicit
+        return "ollama"
 
     def _get_backend(self) -> BaseLLMBackend:
         if self._backend is None:

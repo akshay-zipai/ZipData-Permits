@@ -56,6 +56,7 @@ services:
       args:
         APP_ENV: ${ENVIRONMENT:-dev}
         ENABLE_LOCAL_RAG: ${ENABLE_LOCAL_RAG:-false}
+        PRELOAD_HF_MODEL: ${PRELOAD_HF_MODEL:-false}
     container_name: ca_permit_api
     restart: unless-stopped
     ports:
@@ -65,6 +66,8 @@ services:
     environment:
       # Override Ollama URL to use Docker service name
       - LLM_OLLAMA_BASE_URL=http://ollama:11434
+      - LLM_BACKEND=ollama
+      - ENVIRONMENT=development
       - CHROMA_PERSIST_DIR=/app/chroma_db
     volumes:
       # Persist ChromaDB between restarts

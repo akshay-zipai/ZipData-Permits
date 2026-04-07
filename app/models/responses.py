@@ -78,6 +78,14 @@ class RAGQueryResponse(BaseModel):
     total_time_ms: float
 
 
+class PreviewResponse(BaseModel):
+    question: Optional[str]
+    county_name: Optional[str]
+    zip_code: Optional[str]
+    sources: list[RetrievedChunk]
+    retrieved_count: int
+
+
 # ── LLM ───────────────────────────────────────────────────────────────────────
 
 class LLMResponse(BaseModel):
