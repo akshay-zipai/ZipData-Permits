@@ -73,7 +73,7 @@ services:
       # Persist ChromaDB between restarts
       - chroma_data:/app/chroma_db
       # Persist generated crosswalk CSV — avoids re-downloading on every restart
-      - crosswalk_data:/app/data
+      - ./data:/app/data
       # Output directory
       - ./output:/app/output
     healthcheck:
@@ -87,6 +87,4 @@ volumes:
   ollama_models:
     driver: local
   chroma_data:
-    driver: local
-  crosswalk_data:
     driver: local
