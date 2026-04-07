@@ -65,9 +65,9 @@ services:
       - .env
     environment:
       # Override Ollama URL to use Docker service name
-      - LLM_OLLAMA_BASE_URL=http://ollama:11434
-      - LLM_BACKEND=ollama
-      - ENVIRONMENT=development
+      - LLM_OLLAMA_BASE_URL=${LLM_OLLAMA_BASE_URL:-http://ollama:11434}
+      - LLM_BACKEND=${LLM_BACKEND}
+      - ENVIRONMENT=${ENVIRONMENT}
       - CHROMA_PERSIST_DIR=/app/chroma_db
     volumes:
       # Persist ChromaDB between restarts
