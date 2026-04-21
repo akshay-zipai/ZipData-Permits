@@ -50,12 +50,15 @@ class Settings(BaseSettings):
 
     # ── AWS Bedrock  (ENVIRONMENT=production) ─────────────────────────────────
     BEDROCK_REGION: str = "us-east-1"
-    # Any model that supports the Converse API works here, e.g.:
-    #   anthropic.claude-3-haiku-20240307-v1:0
-    #   anthropic.claude-3-sonnet-20240229-v1:0
-    #   amazon.nova-lite-v1:0
-    #   meta.llama3-8b-instruct-v1:0
-    BEDROCK_MODEL_ID: str = "anthropic.claude-3-haiku-20240307-v1:0"
+
+    # Default: Amazon Nova Lite — no use-case form required, available
+    # immediately after enabling model access in the Bedrock console.
+    # Other no-form-required options:
+    #   amazon.nova-pro-v1:0          (higher quality, slightly more expensive)
+    #   amazon.nova-micro-v1:0        (fastest, text-only)
+    #   meta.llama3-8b-instruct-v1:0  (open-source)
+    #   mistral.mistral-7b-instruct-v0:2
+    BEDROCK_MODEL_ID: str = "amazon.nova-lite-v1:0"
 
     # Set true to use Amazon Titan Image Generator for images in prod
     # (requires Bedrock image model access in your AWS account)
@@ -73,7 +76,6 @@ class Settings(BaseSettings):
     # ── Renovation ────────────────────────────────────────────────────────────
     MAX_SUGGESTIONS: int = 5
     GENERATE_IMAGES: bool = True
-    # DALL-E 3 image options (used in local mode and prod when BEDROCK_IMAGE=false)
     IMAGE_SIZE: str = "1024x1024"
     IMAGE_QUALITY: str = "standard"
 
