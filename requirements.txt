@@ -1,8 +1,25 @@
+# ── Web framework ─────────────────────────────────────────────────────────────
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
-openai==1.54.4
-boto3==1.35.76
-pydantic==2.9.2
+python-multipart==0.0.12
+
+# ── Config & validation ───────────────────────────────────────────────────────
+pydantic==2.10.3
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
-httpx==0.27.2
+
+# ── LLM: OpenAI  (local mode) ─────────────────────────────────────────────────
+# Also used for DALL-E image generation in production (unless BEDROCK_IMAGE=true)
+openai==1.58.1
+
+# ── LLM: AWS Bedrock  (production mode) ───────────────────────────────────────
+boto3==1.37.38
+botocore==1.37.38
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+httpx==0.28.1
+requests==2.32.3
+
+# ── Data ──────────────────────────────────────────────────────────────────────
+pandas==2.2.3
+pyarrow==12.0.1

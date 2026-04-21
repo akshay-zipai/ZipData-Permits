@@ -1,0 +1,62 @@
+[
+  {
+    "question": "What permits are required to build a detached ADU on a residential property in Alameda County?",
+    "zip_code": "94501",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What are the setback requirements for building a barn or agricultural structure in Colusa County?",
+    "zip_code": "95987",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "Do I need a permit to install a wood-burning stove or fireplace insert in Modoc County?",
+    "zip_code": "96101",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What permits are required to build an off-grid cabin with a septic system on rural land in Trinity County?",
+    "zip_code": "96093",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What are the permit fees and inspection requirements for installing solar panels on a residential roof in Lake County?",
+    "zip_code": "95453",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What is the process and timeline for getting a grading permit for a new driveway in Tuolumne County?",
+    "zip_code": "95370",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What building permits are needed to add a detached garage or carport to a single-family home in Del Norte County?",
+    "zip_code": "95531",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What are the requirements for a demolition permit for an old residential structure in Lassen County?",
+    "zip_code": "96130",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What permits and inspections are required to install a residential swimming pool in Kings County?",
+    "zip_code": "93230",
+    "top_k": 5,
+    "include_sources": true
+  },
+  {
+    "question": "What are the zoning and permit requirements for placing a manufactured home on rural land in Glenn County?",
+    "zip_code": "95963",
+    "top_k": 5,
+    "include_sources": true
+  }
+]
