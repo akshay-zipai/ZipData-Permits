@@ -102,7 +102,7 @@ class BedrockClient(LLMClient):
             from openai import AsyncOpenAI
             self._openai_img = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-        img_backend = "Titan Image Generator v2" if self._use_titan else "DALL-E 3 (OpenAI)"
+        img_backend = "anthropic.claude-sonnet-4-6" if self._use_titan else "DALL-E 3 (OpenAI)"
         print(f"[BedrockClient] text={self._model_id} | images={img_backend}")
 
     # ── Text generation ───────────────────────────────────────────────────────
