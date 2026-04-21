@@ -1,20 +1,21 @@
 """
 LLM abstraction layer.
 
-  local       → AsyncOpenAI chat completions
-  production  → boto3 bedrock-runtime Converse API  (async via run_in_executor)
+  local       → AsyncOpenAI chat completions + DALL-E 3 images
+  production  → AWS Bedrock Converse API for text
+                Images: DALL-E 3 if OPENAI_API_KEY is set,
+                        otherwise Amazon Titan Image Generator v2 automatically.
+                        (BEDROCK_IMAGE=true forces Titan even if OpenAI key exists)
 
 Both expose the same interface:
     client = get_llm_client()
     text   = await client.generate(system=..., user=...)
-    url    = await client.generate_image(prompt=...)
+    url    = await client.generate_image(prompt=...)   # returns URL or data-URI
 """
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
-import re
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -33,15 +34,14 @@ class LLMClient(ABC):
     async def generate_image(self, prompt: str) -> Optional[str]: ...
 
 
-# ── OpenAI backend ────────────────────────────────────────────────────────────
+# ── OpenAI backend (local) ────────────────────────────────────────────────────
 
 class OpenAIClient(LLMClient):
     def __init__(self):
         from openai import AsyncOpenAI
         if not settings.OPENAI_API_KEY:
             raise RuntimeError(
-                "OPENAI_API_KEY is not set. "
-                "Add it to your .env file for local mode."
+                "OPENAI_API_KEY is not set. Add it to your .env for local mode."
             )
         self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -70,13 +70,14 @@ class OpenAIClient(LLMClient):
         return resp.data[0].url
 
 
-# ── Bedrock backend ───────────────────────────────────────────────────────────
+# ── Bedrock backend (production) ──────────────────────────────────────────────
 
 class BedrockClient(LLMClient):
     """
-    Uses the Bedrock Converse API — works with Claude, Nova, Llama, Mistral, etc.
-    Image generation defaults to DALL-E (via OpenAI) unless BEDROCK_IMAGE=true,
-    in which case Amazon Titan Image Generator v2 is used.
+    Text  → Bedrock Converse API (any model: Nova, Llama, Mistral, etc.)
+    Image → Auto-selects the best available backend:
+              1. Titan Image Generator v2  (if BEDROCK_IMAGE=true OR no OpenAI key)
+              2. DALL-E 3 via OpenAI       (if OPENAI_API_KEY is set and BEDROCK_IMAGE=false)
     """
 
     def __init__(self):
@@ -92,15 +93,21 @@ class BedrockClient(LLMClient):
         self._br = boto3.client("bedrock-runtime", **kwargs)
         self._model_id = settings.BEDROCK_MODEL_ID
 
-        # Fallback image client (OpenAI DALL-E) when BEDROCK_IMAGE=false
-        self._openai_image_client = None
-        if settings.GENERATE_IMAGES and not settings.BEDROCK_IMAGE:
-            if settings.OPENAI_API_KEY:
-                from openai import AsyncOpenAI
-                self._openai_image_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+        # Decide image backend once at init so we log it clearly
+        self._use_titan = settings.BEDROCK_IMAGE or not settings.OPENAI_API_KEY
+
+        # Optional OpenAI client for DALL-E fallback
+        self._openai_img = None
+        if not self._use_titan and settings.OPENAI_API_KEY:
+            from openai import AsyncOpenAI
+            self._openai_img = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+
+        img_backend = "Titan Image Generator v2" if self._use_titan else "DALL-E 3 (OpenAI)"
+        print(f"[BedrockClient] text={self._model_id} | images={img_backend}")
+
+    # ── Text generation ───────────────────────────────────────────────────────
 
     def _call_converse(self, system: str, user: str) -> str:
-        """Synchronous Bedrock Converse call (run in executor for async)."""
         body: dict = {
             "messages": [{"role": "user", "content": [{"text": user}]}],
             "inferenceConfig": {
@@ -110,7 +117,6 @@ class BedrockClient(LLMClient):
         }
         if system:
             body["system"] = [{"text": system}]
-
         resp = self._br.converse(modelId=self._model_id, **body)
         return resp["output"]["message"]["content"][0]["text"].strip()
 
@@ -118,11 +124,15 @@ class BedrockClient(LLMClient):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._call_converse, system, user)
 
-    def _call_titan_image(self, prompt: str) -> Optional[str]:
-        """Synchronous Titan image generation — returns a data-URI string."""
+    # ── Image generation ──────────────────────────────────────────────────────
+
+    def _call_titan(self, prompt: str) -> str:
+        """Synchronous Titan call — returns a data-URI (base64 PNG)."""
+        # Titan has a 512-char prompt limit — truncate safely
+        safe_prompt = prompt[:500]
         payload = json.dumps({
             "taskType": "TEXT_IMAGE",
-            "textToImageParams": {"text": prompt},
+            "textToImageParams": {"text": safe_prompt},
             "imageGenerationConfig": {
                 "numberOfImages": 1,
                 "quality": "standard",
@@ -144,13 +154,13 @@ class BedrockClient(LLMClient):
         if not settings.GENERATE_IMAGES:
             return None
 
-        if settings.BEDROCK_IMAGE:
+        if self._use_titan:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self._call_titan_image, prompt)
+            return await loop.run_in_executor(None, self._call_titan, prompt)
 
-        # Use OpenAI DALL-E even in prod (simpler, higher quality)
-        if self._openai_image_client:
-            resp = await self._openai_image_client.images.generate(
+        # DALL-E path
+        if self._openai_img:
+            resp = await self._openai_img.images.generate(
                 model=settings.OPENAI_IMAGE_MODEL,
                 prompt=prompt,
                 size=settings.IMAGE_SIZE,
@@ -159,7 +169,11 @@ class BedrockClient(LLMClient):
             )
             return resp.data[0].url
 
-        return None
+        # Should never reach here given init logic, but be explicit
+        raise RuntimeError(
+            "No image backend available. "
+            "Set OPENAI_API_KEY for DALL-E or enable Titan in AWS Bedrock model access."
+        )
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────
