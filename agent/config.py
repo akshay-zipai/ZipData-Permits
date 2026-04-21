@@ -51,17 +51,12 @@ class Settings(BaseSettings):
     # ── AWS Bedrock  (ENVIRONMENT=production) ─────────────────────────────────
     BEDROCK_REGION: str = "us-east-1"
 
-    # Default: Amazon Nova Lite — no use-case form required, available
-    # immediately after enabling model access in the Bedrock console.
-    # Other no-form-required options:
-    #   amazon.nova-pro-v1:0          (higher quality, slightly more expensive)
-    #   amazon.nova-micro-v1:0        (fastest, text-only)
-    #   meta.llama3-8b-instruct-v1:0  (open-source)
-    #   mistral.mistral-7b-instruct-v0:2
+    # Default: Amazon Nova Lite — no use-case form required.
+    # Other options: amazon.nova-pro-v1:0, amazon.nova-micro-v1:0,
+    #   meta.llama3-8b-instruct-v1:0, mistral.mistral-7b-instruct-v0:2
     BEDROCK_MODEL_ID: str = "amazon.nova-lite-v1:0"
 
     # Set true to use Amazon Titan Image Generator for images in prod
-    # (requires Bedrock image model access in your AWS account)
     BEDROCK_IMAGE: bool = False
     BEDROCK_IMAGE_MODEL_ID: str = "amazon.titan-image-generator-v2:0"
 
@@ -80,7 +75,8 @@ class Settings(BaseSettings):
     IMAGE_QUALITY: str = "standard"
 
     # ── LLM shared ────────────────────────────────────────────────────────────
-    LLM_MAX_TOKENS: int = 1024
+    # 4096 is required — 5 suggestions with image_prompts easily exceed 1024 tokens
+    LLM_MAX_TOKENS: int = 4096
     LLM_TEMPERATURE: float = 0.3
 
     @property

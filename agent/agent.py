@@ -76,7 +76,8 @@ Always include permit portal URLs when they appear in the context."""
 RENO_SYSTEM = """You are an expert interior designer and renovation consultant specialising in California homes.
 Provide clear, actionable, inspiring renovation suggestions tailored to the user's location.
 Consider local climate, materials, California building codes, and current design trends.
-Respond ONLY with valid JSON — no markdown fences, no preamble, no trailing text."""
+Respond ONLY with valid JSON — no markdown fences, no preamble, no trailing text.
+Keep each field concise to avoid truncation: description max 2 sentences, image_prompt max 1 sentence."""
 
 RENO_USER_TEMPLATE = """
 I need {max_suggestions} renovation suggestions for:
@@ -84,23 +85,24 @@ I need {max_suggestions} renovation suggestions for:
 - Area of House: {house_part}
 - Additional Requirements: {user_query}
 
-Respond ONLY with valid JSON matching this structure exactly:
+Respond ONLY with valid JSON. Keep ALL string values SHORT to avoid truncation.
+
 {{
   "place": "{place}",
   "house_part": "{house_part}",
-  "summary": "1-2 sentence overview of the renovation approach for this region and space",
+  "summary": "One sentence overview.",
   "suggestions": [
     {{
-      "title": "Short catchy title",
-      "description": "2-3 sentence description of the renovation idea",
-      "style": "Design style (e.g. Modern, Traditional, Rustic, Minimalist)",
-      "budget_tier": "Budget / Mid-range / Premium",
-      "key_materials": ["material1", "material2", "material3"],
+      "title": "Short title (max 6 words)",
+      "description": "Max 2 sentences describing the idea.",
+      "style": "One style label",
+      "budget_tier": "Budget or Mid-range or Premium",
+      "key_materials": ["mat1", "mat2", "mat3"],
       "estimated_duration": "e.g. 2-4 weeks",
       "estimated_cost": "e.g. $5,000-$15,000",
-      "pros": ["pro1", "pro2", "pro3"],
-      "local_tip": "Specific tip relevant to California climate or building codes",
-      "image_prompt": "Detailed DALL-E prompt: photorealistic render of a {house_part} in {place} California showing EXACTLY this style and these materials, professional interior design photography, natural lighting"
+      "pros": ["pro1", "pro2"],
+      "local_tip": "One sentence CA-specific tip.",
+      "image_prompt": "Photorealistic {house_part} render, {place} California, [style], [key material], natural light"
     }}
   ]
 }}
@@ -108,8 +110,69 @@ Respond ONLY with valid JSON matching this structure exactly:
 
 IMAGE_SUFFIX = (
     ", photorealistic architectural render, professional interior design photography, "
-    "high resolution, natural lighting, 4K quality, California home, ultra detailed"
+    "high resolution, natural lighting, 4K quality, California home"
 )
+
+
+# ── JSON repair ───────────────────────────────────────────────────────────────
+
+def _repair_truncated_json(raw: str) -> str:
+    """
+    Attempt to fix a JSON string that was cut off mid-generation.
+    Strategy: find the last complete suggestion object and close the structure.
+    """
+    # Strip markdown fences
+    raw = re.sub(r"^```json\s*|^```\s*|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+
+    # Try parsing as-is first
+    try:
+        json.loads(raw)
+        return raw
+    except json.JSONDecodeError:
+        pass
+
+    # Find the last complete suggestion by locating the last complete }
+    # inside the suggestions array, then close everything properly.
+    # Step 1: find the suggestions array opening
+    suggestions_start = raw.find('"suggestions"')
+    if suggestions_start == -1:
+        raise ValueError("No suggestions array found in response")
+
+    arr_open = raw.find("[", suggestions_start)
+    if arr_open == -1:
+        raise ValueError("No suggestions array bracket found")
+
+    # Step 2: walk through and find complete objects by tracking brace depth
+    depth = 0
+    last_complete_obj_end = -1
+    i = arr_open + 1
+
+    while i < len(raw):
+        ch = raw[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                last_complete_obj_end = i
+        i += 1
+
+    if last_complete_obj_end == -1:
+        raise ValueError("No complete suggestion objects found")
+
+    # Step 3: truncate to the last complete object and close the structure
+    truncated = raw[: last_complete_obj_end + 1]
+
+    # Find the outer object opening to determine what we need to close
+    # We need to close: suggestions array ] and outer object }
+    repaired = truncated + "\n  ]\n}"
+
+    try:
+        json.loads(repaired)
+        return repaired
+    except json.JSONDecodeError:
+        # Last resort: try wrapping what we have
+        raise ValueError(f"Could not repair truncated JSON. Last error position near char {last_complete_obj_end}")
 
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
@@ -415,9 +478,8 @@ class PermitRenoAgent:
 
         async def _gen_one(s: Dict[str, Any]) -> Optional[str]:
             prompt = s.get("image_prompt") or (
-                f"Photorealistic interior design render of a {s.get('style', 'modern')} "
-                f"{s.get('title', 'home renovation')}, California home, "
-                f"featuring {', '.join(s.get('key_materials', []))}"
+                f"Photorealistic {s.get('style', 'modern')} "
+                f"{s.get('title', 'home renovation')} in California"
             )
             try:
                 return await self.llm.generate_image(prompt + IMAGE_SUFFIX)
@@ -494,8 +556,25 @@ class PermitRenoAgent:
             max_suggestions=settings.MAX_SUGGESTIONS,
         )
         raw = await self.llm.generate(system=RENO_SYSTEM, user=user_prompt)
-        raw = re.sub(r"^```json\s*|^```\s*|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-        return json.loads(raw)
+
+        # Attempt 1: repair and parse
+        try:
+            repaired = _repair_truncated_json(raw)
+            return json.loads(repaired)
+        except Exception as e:
+            print(f"[Agent] JSON repair failed: {e}\nRaw response (first 500 chars):\n{raw[:500]}")
+
+        # Attempt 2: ask the LLM to fix its own output
+        fix_prompt = (
+            "The following JSON is malformed or truncated. "
+            "Return ONLY the corrected, complete, valid JSON — nothing else:\n\n" + raw
+        )
+        try:
+            fixed = await self.llm.generate(system="You are a JSON repair tool. Output only valid JSON.", user=fix_prompt)
+            fixed = re.sub(r"^```json\s*|^```\s*|```$", "", fixed.strip(), flags=re.MULTILINE).strip()
+            return json.loads(fixed)
+        except Exception as e2:
+            raise ValueError(f"Could not parse renovation suggestions after repair attempt: {e2}")
 
 
 # ── In-memory session store ───────────────────────────────────────────────────
