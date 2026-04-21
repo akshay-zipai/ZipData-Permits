@@ -1,17 +1,18 @@
 """
 Conversational Agent — State machine guiding users through:
   1. Permit Q&A  (location → county/zip → question → RAG answer)
-  2. Renovation  (area → preferences → AI suggestions + image)
+  2. Renovation  (area → preferences → AI suggestions + 5 images, one per suggestion)
 
 LLM calls go through agent.llm.get_llm_client() which transparently
 dispatches to OpenAI (local) or AWS Bedrock (production).
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from enum import Enum
-from typing import Any, Dict, List, Optional  # Dict imported here — at the top
+from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
 from agent.config import get_settings
@@ -98,12 +99,17 @@ Respond ONLY with valid JSON matching this structure exactly:
       "estimated_duration": "e.g. 2-4 weeks",
       "estimated_cost": "e.g. $5,000-$15,000",
       "pros": ["pro1", "pro2", "pro3"],
-      "local_tip": "Specific tip relevant to California climate or building codes"
+      "local_tip": "Specific tip relevant to California climate or building codes",
+      "image_prompt": "Detailed DALL-E prompt: photorealistic render of a {house_part} in {place} California showing EXACTLY this style and these materials, professional interior design photography, natural lighting"
     }}
-  ],
-  "image_prompt": "Detailed image generation prompt for a photorealistic render of {house_part} renovation with California {place} aesthetic, natural lighting, high quality architectural visualization"
+  ]
 }}
 """
+
+IMAGE_SUFFIX = (
+    ", photorealistic architectural render, professional interior design photography, "
+    "high resolution, natural lighting, 4K quality, California home, ultra detailed"
+)
 
 
 # ── Agent ─────────────────────────────────────────────────────────────────────
@@ -198,7 +204,6 @@ class PermitRenoAgent:
                     suggestions=self.kb.get_all_counties()[:6],
                 )
 
-        # Try county name match
         msg_lower = msg.lower()
         matched = next(
             (c for c in self.kb.get_all_counties()
@@ -280,7 +285,6 @@ class PermitRenoAgent:
         )
 
         answer = await self.llm.generate(system=PERMIT_SYSTEM, user=user_prompt)
-
         ctx.permit_answers.append(answer)
         ctx.permit_count += 1
         ctx.state = AgentState.PERMIT_FOLLOWUP
@@ -316,7 +320,6 @@ class PermitRenoAgent:
                 suggestions=["Yes, show me renovation ideas!", "No thanks"],
             )
 
-        # Treat as a new permit question
         ctx.permit_question = msg
         ctx.state = AgentState.ANSWERING_PERMIT
         return await self._answer_permit(ctx)
@@ -369,44 +372,60 @@ class PermitRenoAgent:
 
         place = ctx.county_name or ctx.city or "California"
 
+        # Step 1 — get structured suggestions (each has its own image_prompt)
         result = await self._get_reno_suggestions(place, ctx.reno_area, ctx.reno_prefs)
         ctx.reno_result = result
 
-        image_url: Optional[str] = None
-        if settings.GENERATE_IMAGES and result.get("image_prompt"):
-            try:
-                image_prompt = (
-                    result["image_prompt"]
-                    + ", photorealistic architectural render, professional interior design, "
-                    "high resolution, natural lighting, 4K quality, California home"
-                )
-                image_url = await self.llm.generate_image(image_prompt)
-            except Exception as exc:
-                print(f"[Agent] Image generation failed (non-fatal): {exc}")
+        suggestions_data: List[Dict[str, Any]] = result.get("suggestions", [])
+
+        # Step 2 — generate one image per suggestion concurrently
+        if settings.GENERATE_IMAGES and suggestions_data:
+            image_urls = await self._generate_suggestion_images(suggestions_data)
+            for i, s in enumerate(suggestions_data):
+                s["image_url"] = image_urls[i]
+        else:
+            for s in suggestions_data:
+                s["image_url"] = None
 
         ctx.reno_count += 1
         ctx.state = AgentState.RENO_FOLLOWUP
 
-        suggestions_data = result.get("suggestions", [])
         summary = result.get("summary", "")
 
         return AgentResponse(
             message=(
                 f"✨ **Renovation ideas for your {ctx.reno_area}** in {place}\n\n"
                 f"{summary}\n\n"
-                f"Here are **{len(suggestions_data)} design concepts** tailored to your area:"
+                f"Here are **{len(suggestions_data)} design concepts** — browse the gallery below:"
             ),
             state=ctx.state,
             data={
                 "suggestions": suggestions_data,
-                "image_url": image_url,
-                "image_prompt": result.get("image_prompt"),
                 "place": place,
                 "house_part": ctx.reno_area,
                 "summary": summary,
             },
             suggestions=["Check permits for this renovation", "Get more ideas", "Done"],
         )
+
+    async def _generate_suggestion_images(
+        self, suggestions: List[Dict[str, Any]]
+    ) -> List[Optional[str]]:
+        """Generate one image per suggestion concurrently."""
+
+        async def _gen_one(s: Dict[str, Any]) -> Optional[str]:
+            prompt = s.get("image_prompt") or (
+                f"Photorealistic interior design render of a {s.get('style', 'modern')} "
+                f"{s.get('title', 'home renovation')}, California home, "
+                f"featuring {', '.join(s.get('key_materials', []))}"
+            )
+            try:
+                return await self.llm.generate_image(prompt + IMAGE_SUFFIX)
+            except Exception as exc:
+                print(f"[Agent] Image failed for '{s.get('title')}': {exc}")
+                return None
+
+        return list(await asyncio.gather(*[_gen_one(s) for s in suggestions]))
 
     async def _handle_reno_followup(self, msg: str, ctx: ConversationContext) -> AgentResponse:
         ml = msg.lower()
@@ -439,7 +458,6 @@ class PermitRenoAgent:
                 state=ctx.state,
             )
 
-        # General renovation question — ask the LLM
         ctx.state = AgentState.RENO_FOLLOWUP
         reply = await self.llm.generate(
             system="You are a renovation advisor for California homes. Answer briefly and helpfully.",
