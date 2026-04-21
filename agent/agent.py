@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 from enum import Enum
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional  # Dict imported here — at the top
 from dataclasses import dataclass, field
 
 from agent.config import get_settings
@@ -24,21 +24,21 @@ settings = get_settings()
 # ── States ────────────────────────────────────────────────────────────────────
 
 class AgentState(str, Enum):
-    GREETING              = "greeting"
-    COLLECT_LOCATION      = "collect_location"
-    CONFIRM_COUNTY        = "confirm_county"
+    GREETING                = "greeting"
+    COLLECT_LOCATION        = "collect_location"
+    CONFIRM_COUNTY          = "confirm_county"
     COLLECT_PERMIT_QUESTION = "collect_permit_question"
-    ANSWERING_PERMIT      = "answering_permit"
-    PERMIT_FOLLOWUP       = "permit_followup"
-    TRANSITION_TO_RENO    = "transition_to_reno"
-    COLLECT_RENO_AREA     = "collect_reno_area"
-    COLLECT_RENO_PREFS    = "collect_reno_prefs"
-    GENERATING_RENO       = "generating_reno"
-    RENO_FOLLOWUP         = "reno_followup"
-    DONE                  = "done"
+    ANSWERING_PERMIT        = "answering_permit"
+    PERMIT_FOLLOWUP         = "permit_followup"
+    TRANSITION_TO_RENO      = "transition_to_reno"
+    COLLECT_RENO_AREA       = "collect_reno_area"
+    COLLECT_RENO_PREFS      = "collect_reno_prefs"
+    GENERATING_RENO         = "generating_reno"
+    RENO_FOLLOWUP           = "reno_followup"
+    DONE                    = "done"
 
 
-# ── Data classes ─────────────────────────────────────────────────────────────
+# ── Data classes ──────────────────────────────────────────────────────────────
 
 @dataclass
 class ConversationContext:
@@ -119,20 +119,26 @@ class PermitRenoAgent:
     async def process(self, user_message: str, ctx: ConversationContext) -> AgentResponse:
         ctx.history.append({"role": "user", "content": user_message})
 
-        dispatch = {
-            AgentState.GREETING:               self._greet,
-            AgentState.COLLECT_LOCATION:       self._handle_location,
-            AgentState.CONFIRM_COUNTY:         self._handle_county_confirm,
-            AgentState.COLLECT_PERMIT_QUESTION: self._handle_permit_question,
-            AgentState.ANSWERING_PERMIT:       self._handle_permit_answer,
-            AgentState.PERMIT_FOLLOWUP:        self._handle_permit_followup,
-            AgentState.TRANSITION_TO_RENO:     self._handle_reno_transition,
-            AgentState.COLLECT_RENO_AREA:      self._handle_reno_area,
-            AgentState.COLLECT_RENO_PREFS:     self._handle_reno_prefs,
-            AgentState.RENO_FOLLOWUP:          self._handle_reno_followup,
-        }
-        handler = dispatch.get(ctx.state, self._fallback)
-        return await handler(user_message, ctx)
+        if ctx.state == AgentState.GREETING:
+            return await self._greet(user_message, ctx)
+        elif ctx.state == AgentState.COLLECT_LOCATION:
+            return await self._handle_location(user_message, ctx)
+        elif ctx.state == AgentState.CONFIRM_COUNTY:
+            return await self._handle_county_confirm(user_message, ctx)
+        elif ctx.state == AgentState.COLLECT_PERMIT_QUESTION:
+            return await self._handle_permit_question(user_message, ctx)
+        elif ctx.state in (AgentState.ANSWERING_PERMIT, AgentState.PERMIT_FOLLOWUP):
+            return await self._handle_permit_followup(user_message, ctx)
+        elif ctx.state == AgentState.TRANSITION_TO_RENO:
+            return await self._handle_reno_transition(user_message, ctx)
+        elif ctx.state == AgentState.COLLECT_RENO_AREA:
+            return await self._handle_reno_area(user_message, ctx)
+        elif ctx.state == AgentState.COLLECT_RENO_PREFS:
+            return await self._handle_reno_prefs(user_message, ctx)
+        elif ctx.state == AgentState.RENO_FOLLOWUP:
+            return await self._handle_reno_followup(user_message, ctx)
+        else:
+            return await self._fallback(user_message, ctx)
 
     def start(self) -> AgentResponse:
         return AgentResponse(
@@ -257,9 +263,6 @@ class PermitRenoAgent:
         ctx.state = AgentState.ANSWERING_PERMIT
         return await self._answer_permit(ctx)
 
-    async def _handle_permit_answer(self, msg: str, ctx: ConversationContext) -> AgentResponse:
-        return await self._handle_permit_followup(msg, ctx)
-
     async def _answer_permit(self, ctx: ConversationContext) -> AgentResponse:
         chunks = self.kb.retrieve(
             query=ctx.permit_question,
@@ -296,9 +299,9 @@ class PermitRenoAgent:
 
     async def _handle_permit_followup(self, msg: str, ctx: ConversationContext) -> AgentResponse:
         ml = msg.lower()
-        reno_kw  = {"renovation", "remodel", "design", "suggest", "idea", "reno", "interior", "decor"}
-        done_kw  = {"done", "no", "thanks", "bye", "exit", "quit", "finish"}
-        more_kw  = {"another", "more", "yes", "question", "permit", "how", "what", "when", "where", "fee", "cost"}
+        reno_kw = {"renovation", "remodel", "design", "suggest", "idea", "reno", "interior", "decor"}
+        done_kw = {"done", "no", "thanks", "bye", "exit", "quit", "finish"}
+        more_kw = {"another", "more", "yes", "question", "permit", "how", "what", "when", "where", "fee", "cost"}
 
         if any(t in ml for t in reno_kw):
             return self._start_reno_flow(ctx)
@@ -340,7 +343,7 @@ class PermitRenoAgent:
             ],
         )
 
-    # ── Reno ─────────────────────────────────────────────────────────────────
+    # ── Reno ──────────────────────────────────────────────────────────────────
 
     async def _handle_reno_area(self, msg: str, ctx: ConversationContext) -> AgentResponse:
         ctx.reno_area = msg.strip()
@@ -366,11 +369,9 @@ class PermitRenoAgent:
 
         place = ctx.county_name or ctx.city or "California"
 
-        # Generate suggestions
         result = await self._get_reno_suggestions(place, ctx.reno_area, ctx.reno_prefs)
         ctx.reno_result = result
 
-        # Generate image
         image_url: Optional[str] = None
         if settings.GENERATE_IMAGES and result.get("image_prompt"):
             try:
@@ -381,7 +382,7 @@ class PermitRenoAgent:
                 )
                 image_url = await self.llm.generate_image(image_prompt)
             except Exception as exc:
-                print(f"[Agent] Image generation failed: {exc}")
+                print(f"[Agent] Image generation failed (non-fatal): {exc}")
 
         ctx.reno_count += 1
         ctx.state = AgentState.RENO_FOLLOWUP
@@ -438,7 +439,7 @@ class PermitRenoAgent:
                 state=ctx.state,
             )
 
-        # General renovation question
+        # General renovation question — ask the LLM
         ctx.state = AgentState.RENO_FOLLOWUP
         reply = await self.llm.generate(
             system="You are a renovation advisor for California homes. Answer briefly and helpfully.",
@@ -475,7 +476,6 @@ class PermitRenoAgent:
             max_suggestions=settings.MAX_SUGGESTIONS,
         )
         raw = await self.llm.generate(system=RENO_SYSTEM, user=user_prompt)
-        # Strip accidental markdown fences
         raw = re.sub(r"^```json\s*|^```\s*|```$", "", raw.strip(), flags=re.MULTILINE).strip()
         return json.loads(raw)
 
@@ -493,7 +493,3 @@ def get_session(session_id: str) -> ConversationContext:
 
 def clear_session(session_id: str) -> None:
     _sessions.pop(session_id, None)
-
-
-# type hint import
-from typing import Dict
