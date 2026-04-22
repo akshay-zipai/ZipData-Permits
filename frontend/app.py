@@ -159,8 +159,9 @@ def send_message(message: str) -> None:
         r.raise_for_status()
         data = r.json()
         msg_data = data.get("data")
+        clean_msg_data = _strip_image_payloads(msg_data)
         st.session_state.messages.append(
-            {"role": "agent", "content": data["message"], "data": msg_data}
+            {"role": "agent", "content": data["message"], "data": clean_msg_data}
         )
         st.session_state.agent_state = data.get("state")
         st.session_state.quick_replies = data.get("suggestions", [])
@@ -169,7 +170,7 @@ def send_message(message: str) -> None:
     except requests.exceptions.Timeout:
         st.session_state.messages.append({
             "role": "agent",
-            "content": "⏱️ Timed out — generating 5 images can take 60–90 s. Please try again.",
+            "content": "⏱️ Timed out — generating the renovation collage can take up to 60–90 s. Please try again.",
             "data": None,
         })
     except Exception as exc:
@@ -198,6 +199,19 @@ def _pill_cls(budget: str) -> str:
     if "premium" in b: return "bp-premium"
     if "budget"  in b: return "bp-budget"
     return "bp-mid"
+
+
+def _strip_image_payloads(data: dict | None) -> dict | None:
+    if not data:
+        return data
+    clean = dict(data)
+    clean.pop("collage_image_url", None)
+    if "suggestions" in clean:
+        clean["suggestions"] = [
+            {k: v for k, v in suggestion.items() if k != "image_url"}
+            for suggestion in clean.get("suggestions", [])
+        ]
+    return clean
 
 
 # ── Colossal slider ────────────────────────────────────────────────────────────
@@ -269,15 +283,6 @@ def render_slider(suggestions: list, block_key: str) -> None:
     thumb_cols = st.columns(n)
     for i, sug in enumerate(suggestions):
         with thumb_cols[i]:
-            thumb_img = sug.get("image_url")
-            if thumb_img:
-                st.image(thumb_img, use_container_width=True)
-            else:
-                st.markdown(
-                    '<div style="height:80px;display:flex;align-items:center;'
-                    'justify-content:center;font-size:2rem;opacity:0.3;">🏠</div>',
-                    unsafe_allow_html=True,
-                )
             title_short = sug.get("title", f"#{i+1}")
             if len(title_short) > 18:
                 title_short = title_short[:17] + "…"
@@ -302,7 +307,7 @@ with st.sidebar:
     st.markdown(
         "1. **Enter your CA ZIP or county**\n"
         "2. **Ask permit questions** — offline CA database\n"
-        "3. **Request renovation ideas** — 5 designs, each with a unique DALL-E image\n"
+        "3. **Request renovation ideas** — 4 designs from one DALL-E collage\n"
         "4. **Swipe / click thumbnails** to browse designs"
     )
     st.divider()
@@ -328,7 +333,7 @@ with st.sidebar:
 st.markdown("""
 <div class="main-header">
   <h1 style="margin:0;font-size:1.75rem;">🏡 California Permit &amp; Renovation Agent</h1>
-  <p>Permit guidance from offline CA data &middot; 5 AI renovation concepts &middot; One unique image per design</p>
+  <p>Permit guidance from offline CA data &middot; 4 AI renovation concepts &middot; One DALL-E collage split into 4 images</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -348,8 +353,13 @@ for msg_idx, msg in enumerate(st.session_state.messages):
             unsafe_allow_html=True,
         )
         mdata = msg.get("data") or {}
-        if "suggestions" in mdata and mdata["suggestions"]:
-            render_slider(mdata["suggestions"], block_key=str(msg_idx))
+        if (
+            "suggestions" in mdata
+            and mdata["suggestions"]
+            and st.session_state.reno_data
+            and msg_idx == len(st.session_state.messages) - 1
+        ):
+            render_slider(st.session_state.reno_data["suggestions"], block_key=str(msg_idx))
 
 # ── Quick replies ──────────────────────────────────────────────────────────────
 if st.session_state.quick_replies:
@@ -376,3 +386,9 @@ with st.form("chat_form", clear_on_submit=True):
 if submitted and form_input:
     send_message(form_input)
     st.rerun()
+
+if st.session_state.reno_data and st.session_state.reno_data.get("collage_image_url"):
+    st.divider()
+    st.markdown("### Full Collage")
+    st.caption("Original 2x2 renovation image used to create the four design tiles.")
+    st.image(st.session_state.reno_data["collage_image_url"], use_container_width=True)

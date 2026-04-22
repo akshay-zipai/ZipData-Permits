@@ -8,7 +8,7 @@ Backend selection (set via ENVIRONMENT in .env):
 Image generation:
   - local       → DALL-E 3 (OpenAI)
   - production  → DALL-E 3 by default; set BEDROCK_IMAGE=true to use
-                  Amazon Titan Image Generator instead
+                  an AWS Bedrock image model such as Amazon Nova Canvas
 """
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict
@@ -56,9 +56,9 @@ class Settings(BaseSettings):
     #   meta.llama3-8b-instruct-v1:0, mistral.mistral-7b-instruct-v0:2
     BEDROCK_MODEL_ID: str = "amazon.nova-lite-v1:0"
 
-    # Set true to use Amazon Titan Image Generator for images in prod
+    # Set true to use an AWS Bedrock image model for images in prod
     BEDROCK_IMAGE: bool = False
-    BEDROCK_IMAGE_MODEL_ID: str = "amazon.titan-image-generator-v2:0"
+    BEDROCK_IMAGE_MODEL_ID: str = "amazon.nova-canvas-v1:0"
 
     # AWS credentials — leave blank to use IAM role / AWS_* env vars / ~/.aws
     AWS_ACCESS_KEY_ID: Optional[str] = None
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     RAG_TOP_K: int = 5
 
     # ── Renovation ────────────────────────────────────────────────────────────
-    MAX_SUGGESTIONS: int = 5
+    MAX_SUGGESTIONS: int = 4
     GENERATE_IMAGES: bool = True
     IMAGE_SIZE: str = "1024x1024"
     IMAGE_QUALITY: str = "standard"

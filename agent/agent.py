@@ -1,7 +1,7 @@
 """
 Conversational Agent — State machine guiding users through:
   1. Permit Q&A  (location → county/zip → question → RAG answer)
-  2. Renovation  (area → preferences → AI suggestions + 5 images, one per suggestion)
+  2. Renovation  (area → preferences → AI suggestions + 4 images from one collage)
 
 LLM calls go through agent.llm.get_llm_client() which transparently
 dispatches to OpenAI (local) or AWS Bedrock (production).
@@ -9,11 +9,15 @@ dispatches to OpenAI (local) or AWS Bedrock (production).
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+
+from PIL import Image
 
 from agent.config import get_settings
 from agent.llm import get_llm_client
@@ -439,11 +443,16 @@ class PermitRenoAgent:
         result = await self._get_reno_suggestions(place, ctx.reno_area, ctx.reno_prefs)
         ctx.reno_result = result
 
-        suggestions_data: List[Dict[str, Any]] = result.get("suggestions", [])
+        suggestions_data: List[Dict[str, Any]] = result.get("suggestions", [])[: settings.MAX_SUGGESTIONS]
 
-        # Step 2 — generate one image per suggestion concurrently
+        # Step 2 — generate one collage image, then split it into four images
+        collage_image_url: Optional[str] = None
         if settings.GENERATE_IMAGES and suggestions_data:
-            image_urls = await self._generate_suggestion_images(suggestions_data)
+            image_urls, collage_image_url = await self._generate_suggestion_images(
+                suggestions_data,
+                reno_area=ctx.reno_area or "home",
+                place=place,
+            )
             for i, s in enumerate(suggestions_data):
                 s["image_url"] = image_urls[i]
         else:
@@ -464,6 +473,7 @@ class PermitRenoAgent:
             state=ctx.state,
             data={
                 "suggestions": suggestions_data,
+                "collage_image_url": collage_image_url,
                 "place": place,
                 "house_part": ctx.reno_area,
                 "summary": summary,
@@ -472,22 +482,85 @@ class PermitRenoAgent:
         )
 
     async def _generate_suggestion_images(
-        self, suggestions: List[Dict[str, Any]]
-    ) -> List[Optional[str]]:
-        """Generate one image per suggestion concurrently."""
-
-        async def _gen_one(s: Dict[str, Any]) -> Optional[str]:
-            prompt = s.get("image_prompt") or (
-                f"Photorealistic {s.get('style', 'modern')} "
-                f"{s.get('title', 'home renovation')} in California"
+        self, suggestions: List[Dict[str, Any]], reno_area: str, place: str
+    ) -> tuple[List[Optional[str]], Optional[str]]:
+        """Generate one DALL-E collage, then split it into one image per suggestion."""
+        try:
+            collage_prompt = self._build_collage_prompt(suggestions, reno_area, place)
+            collage_data_uri = await self.llm.generate_image(collage_prompt)
+            if not collage_data_uri:
+                return [None] * len(suggestions), None
+            image_urls = await asyncio.to_thread(
+                self._split_collage_into_images,
+                collage_data_uri,
+                len(suggestions),
             )
-            try:
-                return await self.llm.generate_image(prompt + IMAGE_SUFFIX)
-            except Exception as exc:
-                print(f"[Agent] Image failed for '{s.get('title')}': {exc}")
-                return None
+            if len(image_urls) < len(suggestions):
+                image_urls.extend([None] * (len(suggestions) - len(image_urls)))
+            return image_urls, collage_data_uri
+        except Exception as exc:
+            print(f"[Agent] Collage image failed: {exc}")
+            return [None] * len(suggestions), None
 
-        return list(await asyncio.gather(*[_gen_one(s) for s in suggestions]))
+    def _build_collage_prompt(
+        self, suggestions: List[Dict[str, Any]], reno_area: str, place: str
+    ) -> str:
+        quadrant_names = ["top left", "top right", "bottom left", "bottom right"]
+        concept_lines = []
+        for i, suggestion in enumerate(suggestions[:4]):
+            concept_prompt = suggestion.get("image_prompt") or suggestion.get("description") or (
+                f"Photorealistic {suggestion.get('style', 'modern')} {suggestion.get('title', 'home renovation')}"
+            )
+            concept_lines.append(
+                f"{quadrant_names[i]} quadrant: {suggestion.get('title', f'Concept {i + 1}')}. "
+                f"{concept_prompt}."
+            )
+
+        return (
+            f"Create exactly one square image containing exactly four square renovation panels for {reno_area} ideas in {place}, California. "
+            "Use a strict 2x2 grid: top left, top right, bottom left, bottom right. "
+            "Each panel must contain exactly one full renovation scene only, not a collage, not multiple rooms, not extra tiles, and not repeated mini-images. "
+            "Make the four panels equal-sized squares with clear gutters between them so they can be cropped cleanly. "
+            "Keep one dominant room view centered in each panel with no cut-off furniture at the panel edges. "
+            "Do not add any text, labels, letters, numbers, watermarks, frames, captions, or decorative mini-panels. "
+            "Keep the viewpoint and lighting polished and photorealistic for an architectural presentation. "
+            + " ".join(concept_lines)
+            + IMAGE_SUFFIX
+        )
+
+    def _split_collage_into_images(self, data_uri: str, expected_images: int) -> List[Optional[str]]:
+        if not data_uri.startswith("data:image"):
+            raise ValueError("Expected a data URI from image generation.")
+
+        _, b64_data = data_uri.split(",", 1)
+        image_bytes = base64.b64decode(b64_data)
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img = img.convert("RGB")
+            width, height = img.size
+            half_width = width // 2
+            half_height = height // 2
+            inset_x = max(8, width // 80)
+            inset_y = max(8, height // 80)
+            boxes = [
+                (inset_x, inset_y, half_width - inset_x, half_height - inset_y),
+                (half_width + inset_x, inset_y, width - inset_x, half_height - inset_y),
+                (inset_x, half_height + inset_y, half_width - inset_x, height - inset_y),
+                (half_width + inset_x, half_height + inset_y, width - inset_x, height - inset_y),
+            ]
+            output: List[Optional[str]] = []
+            for box in boxes[:expected_images]:
+                tile = img.crop(box)
+                side = min(tile.size)
+                left = (tile.width - side) // 2
+                top = (tile.height - side) // 2
+                tile = tile.crop((left, top, left + side, top + side))
+                buffer = io.BytesIO()
+                tile.save(buffer, format="PNG")
+                output.append(
+                    "data:image/png;base64,"
+                    + base64.b64encode(buffer.getvalue()).decode("ascii")
+                )
+            return output
 
     async def _handle_reno_followup(self, msg: str, ctx: ConversationContext) -> AgentResponse:
         ml = msg.lower()
