@@ -116,6 +116,11 @@ API_BASE_URL=http://localhost:8000 streamlit run app.py
 | `GENERATE_IMAGES` | `true` | `false` skips image generation |
 | `IMAGE_SIZE` | `1024x1024` | DALL-E 3 output size |
 | `IMAGE_QUALITY` | `standard` | `standard` or `hd` |
+| `S3_RENOVATION_BUCKET` | None | Private S3 bucket for cached renovation collages |
+| `S3_RENOVATION_PREFIX` | `renovation-collages` | Prefix for collage + metadata objects |
+| `S3_RENOVATION_INDEX_KEY` | `renovation-collages/index.json` | Manifest used to look up matching collages |
+| `S3_URL_EXPIRY_SECONDS` | `3600` | Presigned URL TTL for private collage/metadata access |
+| `S3_REGION` | None | Optional override for S3 region; defaults to `BEDROCK_REGION` |
 | `LLM_MAX_TOKENS` | `1024` | Max tokens per generation |
 | `LLM_TEMPERATURE` | `0.3` | Sampling temperature |
 

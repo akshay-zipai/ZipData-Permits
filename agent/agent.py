@@ -16,12 +16,14 @@ import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from PIL import Image
 
 from agent.config import get_settings
 from agent.llm import get_llm_client
 from agent.permit_kb import get_permit_kb, PermitChunk
+from agent.storage import RenovationCollageStore
 
 settings = get_settings()
 
@@ -47,6 +49,7 @@ class AgentState(str, Enum):
 
 @dataclass
 class ConversationContext:
+    session_id: Optional[str] = None
     state: AgentState = AgentState.COLLECT_LOCATION
     zip_code: Optional[str] = None
     county_name: Optional[str] = None
@@ -186,6 +189,7 @@ class PermitRenoAgent:
     def __init__(self):
         self.llm = get_llm_client()
         self.kb  = get_permit_kb()
+        self.storage = RenovationCollageStore()
 
     # ── Main dispatch ─────────────────────────────────────────────────────────
 
@@ -447,14 +451,25 @@ class PermitRenoAgent:
 
         # Step 2 — generate one collage image, then split it into four images
         collage_image_url: Optional[str] = None
+        metadata_url: Optional[str] = None
+        collage_s3_key: Optional[str] = None
+        metadata_s3_key: Optional[str] = None
+        image_source = "disabled"
         if settings.GENERATE_IMAGES and suggestions_data:
-            image_urls, collage_image_url = await self._generate_suggestion_images(
+            image_urls, collage_image_url, storage_result, image_source = await self._generate_suggestion_images(
                 suggestions_data,
                 reno_area=ctx.reno_area or "home",
                 place=place,
+                user_prefs=ctx.reno_prefs or "",
+                summary=result.get("summary", ""),
+                session_id=ctx.session_id,
             )
             for i, s in enumerate(suggestions_data):
                 s["image_url"] = image_urls[i]
+            if storage_result:
+                metadata_url = storage_result.get("metadata_url")
+                collage_s3_key = storage_result.get("collage_s3_key")
+                metadata_s3_key = storage_result.get("metadata_s3_key")
         else:
             for s in suggestions_data:
                 s["image_url"] = None
@@ -474,6 +489,10 @@ class PermitRenoAgent:
             data={
                 "suggestions": suggestions_data,
                 "collage_image_url": collage_image_url,
+                "collage_s3_key": collage_s3_key,
+                "metadata_s3_key": metadata_s3_key,
+                "metadata_url": metadata_url,
+                "image_source": image_source,
                 "place": place,
                 "house_part": ctx.reno_area,
                 "summary": summary,
@@ -482,25 +501,74 @@ class PermitRenoAgent:
         )
 
     async def _generate_suggestion_images(
-        self, suggestions: List[Dict[str, Any]], reno_area: str, place: str
-    ) -> tuple[List[Optional[str]], Optional[str]]:
-        """Generate one DALL-E collage, then split it into one image per suggestion."""
+        self,
+        suggestions: List[Dict[str, Any]],
+        reno_area: str,
+        place: str,
+        user_prefs: str,
+        summary: str,
+        session_id: Optional[str],
+    ) -> tuple[List[Optional[str]], Optional[str], Optional[Dict[str, str]], str]:
+        """Reuse a cached collage from S3 or generate a new one and persist it."""
         try:
+            cache_key = self.storage.build_cache_key(
+                place,
+                reno_area,
+                user_prefs,
+                len(suggestions),
+            )
+
+            if self.storage.enabled:
+                cached = await asyncio.to_thread(self.storage.get_cached_collage, cache_key)
+                if cached:
+                    image_urls = await asyncio.to_thread(
+                        self._split_collage_into_images_from_bytes,
+                        cached["image_bytes"],
+                        len(suggestions),
+                    )
+                    if len(image_urls) < len(suggestions):
+                        image_urls.extend([None] * (len(suggestions) - len(image_urls)))
+                    return image_urls, cached["collage_url"], {
+                        "collage_s3_key": cached["collage_s3_key"],
+                        "metadata_s3_key": cached["metadata_s3_key"],
+                        "metadata_url": cached["metadata_url"],
+                    }, "s3-cache"
+
             collage_prompt = self._build_collage_prompt(suggestions, reno_area, place)
             collage_data_uri = await self.llm.generate_image(collage_prompt)
             if not collage_data_uri:
-                return [None] * len(suggestions), None
+                return [None] * len(suggestions), None, None, "none"
+            collage_bytes = self._decode_data_uri(collage_data_uri)
             image_urls = await asyncio.to_thread(
-                self._split_collage_into_images,
-                collage_data_uri,
+                self._split_collage_into_images_from_bytes,
+                collage_bytes,
                 len(suggestions),
             )
             if len(image_urls) < len(suggestions):
                 image_urls.extend([None] * (len(suggestions) - len(image_urls)))
-            return image_urls, collage_data_uri
+            storage_result = None
+            collage_image_url = collage_data_uri
+            if self.storage.enabled:
+                metadata = self._build_collage_metadata(
+                    cache_key=cache_key,
+                    place=place,
+                    reno_area=reno_area,
+                    user_prefs=user_prefs,
+                    summary=summary,
+                    suggestions=suggestions,
+                    session_id=session_id,
+                )
+                storage_result = await asyncio.to_thread(
+                    self.storage.put_collage,
+                    cache_key=cache_key,
+                    image_bytes=collage_bytes,
+                    metadata=metadata,
+                )
+                collage_image_url = storage_result["collage_url"]
+            return image_urls, collage_image_url, storage_result, "generated"
         except Exception as exc:
             print(f"[Agent] Collage image failed: {exc}")
-            return [None] * len(suggestions), None
+            return [None] * len(suggestions), None, None, "error"
 
     def _build_collage_prompt(
         self, suggestions: List[Dict[str, Any]], reno_area: str, place: str
@@ -528,12 +596,9 @@ class PermitRenoAgent:
             + IMAGE_SUFFIX
         )
 
-    def _split_collage_into_images(self, data_uri: str, expected_images: int) -> List[Optional[str]]:
-        if not data_uri.startswith("data:image"):
-            raise ValueError("Expected a data URI from image generation.")
-
-        _, b64_data = data_uri.split(",", 1)
-        image_bytes = base64.b64decode(b64_data)
+    def _split_collage_into_images_from_bytes(
+        self, image_bytes: bytes, expected_images: int
+    ) -> List[Optional[str]]:
         with Image.open(io.BytesIO(image_bytes)) as img:
             img = img.convert("RGB")
             width, height = img.size
@@ -561,6 +626,54 @@ class PermitRenoAgent:
                     + base64.b64encode(buffer.getvalue()).decode("ascii")
                 )
             return output
+
+    def _decode_data_uri(self, data_uri: str) -> bytes:
+        if not data_uri.startswith("data:image"):
+            raise ValueError("Expected a data URI from image generation.")
+        _, b64_data = data_uri.split(",", 1)
+        return base64.b64decode(b64_data)
+
+    def _build_collage_metadata(
+        self,
+        *,
+        cache_key: str,
+        place: str,
+        reno_area: str,
+        user_prefs: str,
+        summary: str,
+        suggestions: List[Dict[str, Any]],
+        session_id: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "cache_key": cache_key,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+            "place": place,
+            "house_part": reno_area,
+            "user_prefs": user_prefs,
+            "summary": summary,
+            "styles": [s.get("style") for s in suggestions if s.get("style")],
+            "budget_tiers": [s.get("budget_tier") for s in suggestions if s.get("budget_tier")],
+            "image_model": settings.BEDROCK_IMAGE_MODEL_ID
+            if settings.is_production and not settings.OPENAI_API_KEY
+            else settings.OPENAI_IMAGE_MODEL,
+            "suggestions": [
+                {
+                    "tile_index": idx,
+                    "title": s.get("title"),
+                    "description": s.get("description"),
+                    "style": s.get("style"),
+                    "budget_tier": s.get("budget_tier"),
+                    "key_materials": s.get("key_materials", []),
+                    "estimated_duration": s.get("estimated_duration"),
+                    "estimated_cost": s.get("estimated_cost"),
+                    "pros": s.get("pros", []),
+                    "local_tip": s.get("local_tip"),
+                    "image_prompt": s.get("image_prompt"),
+                }
+                for idx, s in enumerate(suggestions)
+            ],
+        }
 
     async def _handle_reno_followup(self, msg: str, ctx: ConversationContext) -> AgentResponse:
         ml = msg.lower()
@@ -657,7 +770,10 @@ _sessions: Dict[str, ConversationContext] = {}
 
 def get_session(session_id: str) -> ConversationContext:
     if session_id not in _sessions:
-        _sessions[session_id] = ConversationContext(state=AgentState.COLLECT_LOCATION)
+        _sessions[session_id] = ConversationContext(
+            session_id=session_id,
+            state=AgentState.COLLECT_LOCATION,
+        )
     return _sessions[session_id]
 
 

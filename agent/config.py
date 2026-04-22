@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     GENERATE_IMAGES: bool = True
     IMAGE_SIZE: str = "1024x1024"
     IMAGE_QUALITY: str = "standard"
+    S3_RENOVATION_BUCKET: Optional[str] = None
+    S3_RENOVATION_PREFIX: str = "renovation-collages"
+    S3_RENOVATION_INDEX_KEY: str = "renovation-collages/index.json"
+    S3_URL_EXPIRY_SECONDS: int = 3600
+    S3_REGION: Optional[str] = None
 
     # ── LLM shared ────────────────────────────────────────────────────────────
     # 4096 is required — 5 suggestions with image_prompts easily exceed 1024 tokens
