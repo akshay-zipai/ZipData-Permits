@@ -121,6 +121,14 @@ API_BASE_URL=http://localhost:8000 streamlit run app.py
 | `S3_RENOVATION_INDEX_KEY` | `renovation-collages/index.json` | Manifest used to look up matching collages |
 | `S3_URL_EXPIRY_SECONDS` | `3600` | Presigned URL TTL for private collage/metadata access |
 | `S3_REGION` | None | Optional override for S3 region; defaults to `BEDROCK_REGION` |
+| `DOCUMENTDB_ENABLED` | `false` | Enables persistent question/session storage in AWS DocumentDB |
+| `DOCUMENTDB_URI` | None | Full Mongo-compatible URI override for DocumentDB |
+| `DOCUMENTDB_CLUSTER_ID` | None | Cluster identifier used to auto-resolve the endpoint via AWS API |
+| `DOCUMENTDB_HOST` | None | Cluster endpoint hostname if you want to bypass AWS endpoint lookup |
+| `DOCUMENTDB_DATABASE` | `zipai_permits` | Database name for persistent analytics/question storage |
+| `DOCUMENTDB_QUESTIONS_COLLECTION` | `dataset_questions` | Collection containing normalized user permit questions |
+| `DOCUMENTDB_SESSIONS_COLLECTION` | `conversation_sessions` | Collection containing session lifecycle documents |
+| `DOCUMENTDB_TLS_CA_FILE` | `/app/certs/rds-global-bundle.pem` | CA bundle path for AWS DocumentDB TLS validation |
 | `LLM_MAX_TOKENS` | `1024` | Max tokens per generation |
 | `LLM_TEMPERATURE` | `0.3` | Sampling temperature |
 
@@ -190,6 +198,27 @@ Only the **LLM generation calls** and **image generation** require internet/API 
 | `GET` | `/counties/{county}/zips` | List ZIP codes for a county |
 
 Interactive docs: `http://localhost:8000/docs`
+
+### DocumentDB question schema
+
+When `DOCUMENTDB_ENABLED=true`, each answered permit question is persisted into
+`dataset_questions` with:
+
+- Stable identifiers: `question_id`, `session_id`
+- Normalized question fields: `question_text`, `normalized_question`, `question_hash`
+- Location context: `location.state_code`, `location.county_name`, `location.zip_code`, `location.city`
+- Retrieval metadata: `retrieval.top_k`, `retrieval.chunks_used`, `retrieval.source_urls`
+- LLM output metadata: `answer.text`, `answer.generated_at`, `answer.model_provider`, `answer.model_name`
+- Workflow analytics: `workflow.state_before`, `workflow.state_after`, `workflow.permit_count`, `workflow.reno_count`
+- Operational metadata: `tags`, `created_at`, `updated_at`, `app_version`, `environment`
+
+The app also keeps a lightweight `conversation_sessions` collection for session
+start/reset tracking. Indexes are created automatically on startup for
+`question_id`, `session_id`, `created_at`, and common location/hash query paths.
+
+For Docker deployments, the backend image downloads the AWS RDS/DocumentDB
+global CA bundle to `/app/certs/rds-global-bundle.pem`, which is the path used
+by `DOCUMENTDB_TLS_CA_FILE`.
 
 ---
 

@@ -4,7 +4,12 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    ca-certificates \
     curl \
+    && update-ca-certificates \
+    && mkdir -p /app/certs \
+    && curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+      -o /app/certs/rds-global-bundle.pem \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

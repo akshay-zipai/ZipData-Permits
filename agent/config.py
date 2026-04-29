@@ -10,11 +10,13 @@ Image generation:
   - production  → DALL-E 3 by default; set BEDROCK_IMAGE=true to use
                   an AWS Bedrock image model such as Amazon Nova Canvas
 """
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote_plus
+
+from pydantic import ConfigDict
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -79,6 +81,26 @@ class Settings(BaseSettings):
     S3_URL_EXPIRY_SECONDS: int = 3600
     S3_REGION: Optional[str] = None
 
+    # ── AWS DocumentDB ────────────────────────────────────────────────────────
+    DOCUMENTDB_ENABLED: bool = False
+    DOCUMENTDB_URI: Optional[str] = None
+    DOCUMENTDB_CLUSTER_ID: Optional[str] = None
+    DOCUMENTDB_HOST: Optional[str] = None
+    DOCUMENTDB_PORT: int = 27017
+    DOCUMENTDB_USERNAME: Optional[str] = None
+    DOCUMENTDB_PASSWORD: Optional[str] = None
+    DOCUMENTDB_DATABASE: str = "zipai_permits"
+    DOCUMENTDB_QUESTIONS_COLLECTION: str = "dataset_questions"
+    DOCUMENTDB_SESSIONS_COLLECTION: str = "conversation_sessions"
+    DOCUMENTDB_TLS: bool = True
+    DOCUMENTDB_TLS_CA_FILE: Optional[str] = None
+    DOCUMENTDB_REPLICA_SET: str = "rs0"
+    DOCUMENTDB_READ_PREFERENCE: str = "secondaryPreferred"
+    DOCUMENTDB_RETRY_WRITES: bool = False
+    DOCUMENTDB_DIRECT_CONNECTION: bool = False
+    DOCUMENTDB_CONNECT_TIMEOUT_MS: int = 10000
+    DOCUMENTDB_SERVER_SELECTION_TIMEOUT_MS: int = 10000
+
     # ── LLM shared ────────────────────────────────────────────────────────────
     # 4096 is required — 5 suggestions with image_prompts easily exceed 1024 tokens
     LLM_MAX_TOKENS: int = 4096
@@ -87,6 +109,38 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() == "production"
+
+    @property
+    def documentdb_configured(self) -> bool:
+        if self.DOCUMENTDB_URI:
+            return True
+        return bool(
+            self.DOCUMENTDB_HOST
+            and self.DOCUMENTDB_USERNAME
+            and self.DOCUMENTDB_PASSWORD
+        )
+
+    def build_documentdb_uri(self, host: str) -> str:
+        if self.DOCUMENTDB_URI:
+            return self.DOCUMENTDB_URI
+
+        if not self.DOCUMENTDB_USERNAME or not self.DOCUMENTDB_PASSWORD:
+            raise ValueError("DocumentDB username/password are required to build the URI.")
+
+        username = quote_plus(self.DOCUMENTDB_USERNAME)
+        password = quote_plus(self.DOCUMENTDB_PASSWORD)
+        tls_value = "true" if self.DOCUMENTDB_TLS else "false"
+        retry_writes = "true" if self.DOCUMENTDB_RETRY_WRITES else "false"
+        direct_connection = "true" if self.DOCUMENTDB_DIRECT_CONNECTION else "false"
+
+        return (
+            f"mongodb://{username}:{password}@{host}:{self.DOCUMENTDB_PORT}/"
+            f"?tls={tls_value}"
+            f"&replicaSet={self.DOCUMENTDB_REPLICA_SET}"
+            f"&readPreference={self.DOCUMENTDB_READ_PREFERENCE}"
+            f"&retryWrites={retry_writes}"
+            f"&directConnection={direct_connection}"
+        )
 
 
 @lru_cache()

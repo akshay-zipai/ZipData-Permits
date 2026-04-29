@@ -14,10 +14,12 @@ from pydantic import BaseModel
 
 from agent.config import get_settings
 from agent.agent import AgentState, PermitRenoAgent, clear_session, get_session
+from agent.documentdb import get_question_store
 from agent.permit_kb import get_permit_kb
 
 settings = get_settings()
 agent = PermitRenoAgent()
+question_store = get_question_store()
 
 
 @asynccontextmanager
@@ -25,10 +27,19 @@ async def lifespan(app: FastAPI):
     # Pre-load the KB so the first request isn't slow
     kb = get_permit_kb()
     kb._load()
+    documentdb_status = "disabled"
+    if question_store.enabled:
+        try:
+            question_store.initialize()
+            documentdb_status = "connected"
+        except Exception as exc:
+            documentdb_status = f"error: {exc}"
+            print(f"[startup] DocumentDB initialization failed: {exc}")
     print(
         f"[startup] KB loaded — {len(kb._records):,} records, "
         f"{len(kb.get_all_counties())} counties | "
-        f"backend={settings.ENVIRONMENT}"
+        f"backend={settings.ENVIRONMENT} | "
+        f"documentdb={documentdb_status}"
     )
     yield
 
@@ -89,6 +100,9 @@ async def health():
         "llm_model": settings.BEDROCK_MODEL_ID if settings.is_production else settings.OPENAI_MODEL,
         "kb_records": len(kb._records),
         "kb_counties": len(kb.get_all_counties()),
+        "documentdb_enabled": settings.DOCUMENTDB_ENABLED,
+        "documentdb_ready": question_store.is_ready,
+        "documentdb_database": settings.DOCUMENTDB_DATABASE if settings.DOCUMENTDB_ENABLED else None,
     }
 
 
@@ -96,6 +110,11 @@ async def health():
 async def start_session(req: StartRequest):
     session_id = req.session_id or str(uuid.uuid4())
     clear_session(session_id)
+    if question_store.enabled:
+        try:
+            question_store.upsert_session_start(session_id)
+        except Exception as exc:
+            print(f"[DocumentDB] Failed to start session {session_id}: {exc}")
     response = agent.start()
     ctx = get_session(session_id)
     ctx.state = response.state
@@ -129,6 +148,11 @@ async def chat(req: ChatRequest):
 @app.post("/session/reset", tags=["Session"])
 async def reset_session(req: ResetRequest):
     clear_session(req.session_id)
+    if question_store.enabled:
+        try:
+            question_store.close_session(req.session_id, status="reset")
+        except Exception as exc:
+            print(f"[DocumentDB] Failed to close session {req.session_id}: {exc}")
     return {"status": "reset", "session_id": req.session_id}
 
 

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from PIL import Image
 
 from agent.config import get_settings
+from agent.documentdb import get_question_store
 from agent.llm import get_llm_client
 from agent.permit_kb import get_permit_kb, PermitChunk
 from agent.storage import RenovationCollageStore
@@ -190,6 +191,7 @@ class PermitRenoAgent:
         self.llm = get_llm_client()
         self.kb  = get_permit_kb()
         self.storage = RenovationCollageStore()
+        self.question_store = get_question_store()
 
     # ── Main dispatch ─────────────────────────────────────────────────────────
 
@@ -340,6 +342,7 @@ class PermitRenoAgent:
         return await self._answer_permit(ctx)
 
     async def _answer_permit(self, ctx: ConversationContext) -> AgentResponse:
+        state_before = ctx.state.value
         chunks = self.kb.retrieve(
             query=ctx.permit_question,
             top_k=settings.RAG_TOP_K,
@@ -360,6 +363,13 @@ class PermitRenoAgent:
         ctx.permit_count += 1
         ctx.state = AgentState.PERMIT_FOLLOWUP
 
+        await self._store_permit_question(
+            ctx=ctx,
+            chunks=chunks,
+            answer=answer,
+            state_before=state_before,
+        )
+
         sources = list({c.source_url for c in chunks if c.source_url})
         source_text = ""
         if sources:
@@ -371,6 +381,35 @@ class PermitRenoAgent:
             data={"county": ctx.county_name, "chunks_used": len(chunks)},
             suggestions=["Ask another permit question", "Get renovation suggestions", "Done"],
         )
+
+    async def _store_permit_question(
+        self,
+        *,
+        ctx: ConversationContext,
+        chunks: List[PermitChunk],
+        answer: str,
+        state_before: str,
+    ) -> None:
+        if not self.question_store.enabled or not ctx.session_id or not ctx.permit_question:
+            return
+
+        try:
+            await asyncio.to_thread(
+                self.question_store.store_permit_question,
+                session_id=ctx.session_id,
+                question_text=ctx.permit_question,
+                county_name=ctx.county_name,
+                zip_code=ctx.zip_code,
+                city=ctx.city,
+                chunks=chunks,
+                answer=answer,
+                state_before=state_before,
+                state_after=ctx.state.value,
+                permit_count=ctx.permit_count,
+                reno_count=ctx.reno_count,
+            )
+        except Exception as exc:
+            print(f"[DocumentDB] Failed to persist permit question: {exc}")
 
     async def _handle_permit_followup(self, msg: str, ctx: ConversationContext) -> AgentResponse:
         ml = msg.lower()
